@@ -1,7 +1,7 @@
 --==========================================================
---   MAKAZI MOD  •  v10.2  •  FULL MOBILE EDITION
+--   MAKAZI MOD  •  v10.3  •  FULL MOBILE EDITION
 --==========================================================
-print("=== MAKAZI MOD v10.2 START ===")
+print("=== MAKAZI MOD v10.3 START ===")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -59,11 +59,7 @@ local function gradient(obj, c1, c2, rotation)
 	return g
 end
 local soundEnabled = true
-local SOUND_IDS = {
-	click = "rbxassetid://6895079853",
-	open = "rbxassetid://6895080175",
-	close = "rbxassetid://6895080059",
-}
+local SOUND_IDS = { click = "rbxassetid://6895079853", open = "rbxassetid://6895080175", close = "rbxassetid://6895080059" }
 local function playSound(id, vol, pitch)
 	if not soundEnabled then return end
 	local s = Instance.new("Sound")
@@ -175,7 +171,6 @@ menu.ClipsDescendants = true
 menu.Parent = gui
 corner(menu, 14)
 stroke(menu, COLORS.accent, 1.5, 0.4)
--- ФОН SAHUR
 local menuBg = Instance.new("ImageLabel")
 menuBg.Size = UDim2.new(1, 0, 1, 0)
 menuBg.BackgroundTransparency = 1
@@ -207,7 +202,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -140, 1, 0)
 title.Position = UDim2.new(0, 12, 0, -2)
 title.BackgroundTransparency = 1
-title.Text = "MAKAZI MOD v10.2"
+title.Text = "MAKAZI MOD v10.3"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 15
 title.Font = FONT_BOLD
@@ -532,6 +527,8 @@ local function makeSlider(parent, text, min, max, default, callback)
 	pcall(callback, value)
 	table.insert(allItems, { obj = frame, text = text, parent = parent })
 end
+
+-- ПЕРЕМЕННЫЕ
 local espEnabled = false
 local espLines = {}
 local hasDrawing = pcall(function() return Drawing end)
@@ -544,6 +541,10 @@ local aimSwitchDelay = 0.5
 local aimCurrentTarget = nil
 local aimLastSwitch = 0
 local aimPrediction = true
+local aimMethod = "auto"
+local aimLockedKey = nil
+local aimTriggerBot = false
+local aimTriggerRadius = 40
 local noclipEnabled = false
 local godEnabled = false
 local infJumpEnabled = false
@@ -555,6 +556,7 @@ local savedGravity = workspace.Gravity
 local autoSprintEnabled = false
 local antiFlingEnabled = false
 local autoClickerEnabled = false
+local autoClickerDelay = 0.1
 local hitboxEnabled = false
 local hitboxSize = 5
 local infiniteAmmoEnabled = false
@@ -579,8 +581,19 @@ local spinAV = nil
 local spinSavedAutoRotate = nil
 local flyGuiLoaded = false
 local FLY_GUI_V3_URL = "https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt"
+local mm2AutoWinOn = false
+local mm2FlySpeed = 35
+local mm2KillDist = 4
+local mm2Thread = nil
+local mm2AutoPickupOn = false
+local mm2PickupSpeed = 35
+local mm2PickupDist = 3
+local mm2PickupThread = nil
 local babftAutoWinEnabled = false
 local babftAutoWinThread = nil
+local babftChestWaitTime = 3
+
+-- ФУНКЦИИ
 local function loadFlyGUI_V3()
 	if flyGuiLoaded then return end
 	flyGuiLoaded = true
@@ -630,40 +643,143 @@ local function isVisible(targetPart)
 	local result = workspace:Raycast(myHead.Position, targetPart.Position - myHead.Position, params)
 	return result == nil or result.Instance:IsDescendantOf(targetPart.Parent)
 end
-RunService.RenderStepped:Connect(function()
-	if not espEnabled then return end
+local function getBestTarget()
+	local myChar = player.Character
+	local myHead = myChar and (myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart"))
+	if not myHead then return nil end
 	local camera = workspace.CurrentCamera
+	if not camera then return nil end
+	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+	local best, bestScore = nil, math.huge
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player then
+		if p ~= player and p.Character then
+			if aimTeamCheck and p.Team and p.Team == player.Team then continue end
 			local char = p.Character
-			local head = char and char:FindFirstChild("Head")
-			if char and head then
-				if not char:FindFirstChild("ESP_HL") then
-					local hl = Instance.new("Highlight")
-					hl.Name = "ESP_HL"
-					hl.FillTransparency = 1
-					hl.OutlineColor = COLORS.accent
-					hl.OutlineTransparency = 0
-					hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-					hl.Adornee = char
-					hl.Parent = char
-				end
-				if hasDrawing then
-					if not espLines[p] then
-						local ln = Drawing.new("Line")
-						ln.Thickness = 1
-						ln.Color = COLORS.accent
-						ln.Transparency = 0.7
-						espLines[p] = ln
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if not hum or hum.Health <= 0 then continue end
+			local head = char:FindFirstChild("Head")
+			local hrp = char:FindFirstChild("HumanoidRootPart")
+			if not head or not hrp then continue end
+			local dist = (hrp.Position - myHead.Position).Magnitude
+			if dist > aimFOV then continue end
+			if aimVisibleOnly and not isVisible(head) then continue end
+			local sp, onScreen = camera:WorldToViewportPoint(head.Position)
+			if not onScreen then continue end
+			local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+			local score = screenDist + dist * 0.3
+			if score < bestScore then
+				bestScore = score
+				best = head
+			end
+		end
+	end
+	return best
+end
+local function aimAt(targetPos)
+	local camera = workspace.CurrentCamera
+	local myChar = player.Character
+	if not camera or not myChar then return end
+	local actualPos = targetPos
+	if aimPrediction and aimCurrentTarget then
+		local vel = aimCurrentTarget.AssemblyLinearVelocity or Vector3.zero
+		local dist = (targetPos - camera.CFrame.Position).Magnitude
+		local predictTime = math.min(dist / 500, 0.15)
+		actualPos = targetPos + vel * predictTime
+	end
+	local targetCF = CFrame.new(camera.CFrame.Position, actualPos)
+	camera.CFrame = camera.CFrame:Lerp(targetCF, aimSmooth)
+	if aimMethod == "humanoid" or aimMethod == "hybrid" or aimMethod == "auto" then
+		local hum = myChar:FindFirstChildOfClass("Humanoid")
+		if hum then
+			pcall(function() hum.TargetPoint = actualPos end)
+		end
+	end
+end
+pcall(function() RunService:UnbindFromRenderStep("MakaziAimbot") end)
+RunService:BindToRenderStep("MakaziAimbot", Enum.RenderPriority.Camera.Value + 20, function()
+	if not aimEnabled then return end
+	local myChar = player.Character
+	local myHead = myChar and (myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart"))
+	if not myHead then return end
+	if aimCurrentTarget and (not aimCurrentTarget.Parent or not isAlive(aimCurrentTarget.Parent)) then
+		aimCurrentTarget = nil
+		aimLockedKey = nil
+	end
+	local now = tick()
+	local canSwitch = (now - aimLastSwitch) >= aimSwitchDelay or not aimCurrentTarget
+	if not aimCurrentTarget or canSwitch then
+		local newTarget = getBestTarget()
+		if newTarget and newTarget ~= aimCurrentTarget then
+			local targetKey = newTarget.Parent
+			if aimLockedKey and aimLockedKey == targetKey then
+			else
+				aimCurrentTarget = newTarget
+				aimLockedKey = targetKey
+				aimLastSwitch = now
+			end
+		end
+	end
+	local target = aimCurrentTarget
+	if target and target.Parent then
+		aimAt(target.Position)
+		if aimTriggerBot then
+			local camera = workspace.CurrentCamera
+			local sp, onScreen = camera:WorldToViewportPoint(target.Position)
+			if onScreen then
+				local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+				local aimDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+				if aimDist < aimTriggerRadius then
+					local char = player.Character
+					if char then
+						for _, t in ipairs(char:GetChildren()) do
+							if t:IsA("Tool") then pcall(function() t:Activate() end) break end
+						end
 					end
-					local sp, onScreen = camera:WorldToViewportPoint(head.Position)
-					local ln = espLines[p]
-					ln.From = Vector2.new(camera.ViewportSize.X / 2, 0)
-					ln.To = Vector2.new(sp.X, sp.Y)
-					ln.Visible = onScreen
 				end
 			end
 		end
+	end
+end)
+RunService.RenderStepped:Connect(function()
+	if espEnabled then
+		local camera = workspace.CurrentCamera
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= player then
+				local char = p.Character
+				local head = char and char:FindFirstChild("Head")
+				if char and head then
+					local hl = char:FindFirstChild("ESP_HL")
+					if not hl then
+						hl = Instance.new("Highlight")
+						hl.Name = "ESP_HL"
+						hl.FillTransparency = 1
+						hl.OutlineColor = COLORS.accent
+						hl.OutlineTransparency = 0
+						hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+						hl.Adornee = char
+						hl.Parent = char
+					end
+					if hasDrawing then
+						local ln = espLines[p]
+						if not ln then
+							ln = Drawing.new("Line")
+							ln.Thickness = 1
+							ln.Color = COLORS.accent
+							ln.Transparency = 0.7
+							espLines[p] = ln
+						end
+						local sp, onScreen = camera:WorldToViewportPoint(head.Position)
+						ln.From = Vector2.new(camera.ViewportSize.X / 2, 0)
+						ln.To = Vector2.new(sp.X, sp.Y)
+						ln.Visible = onScreen
+					end
+				end
+			end
+		end
+	end
+	if cinematicEnabled then
+		local camera = workspace.CurrentCamera
+		camera.FieldOfView = 40
 	end
 end)
 local function clearESP()
@@ -677,73 +793,30 @@ local function clearESP()
 	for _, ln in pairs(espLines) do pcall(function() ln:Remove() end) end
 	espLines = {}
 end
-RunService.RenderStepped:Connect(function()
-	if not aimEnabled then return end
-	local myChar = player.Character
-	local myHead = myChar and (myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart"))
-	if not myHead then return end
-	local camera = workspace.CurrentCamera
-	if not camera then return end
-	if aimCurrentTarget and (not aimCurrentTarget.Parent or not isAlive(aimCurrentTarget.Parent)) then
-		aimCurrentTarget = nil
-	end
-	local now = tick()
-	local canSwitch = (now - aimLastSwitch) >= aimSwitchDelay or not aimCurrentTarget
-	local best, bestScore = nil, math.huge
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player and p.Character then
-			if aimTeamCheck and p.Team and p.Team == player.Team then continue end
-			local char = p.Character
-			if isAlive(char) then
-				local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-				if head then
-					local dist = (head.Position - myHead.Position).Magnitude
-					if dist <= aimFOV then
-						if aimVisibleOnly and not isVisible(head) then continue end
-						if dist < bestScore then
-							bestScore = dist
-							best = head
-						end
-					end
-				end
-			end
-		end
-	end
-	if best and best ~= aimCurrentTarget and canSwitch then
-		aimCurrentTarget = best
-		aimLastSwitch = now
-	end
-	local target = aimCurrentTarget
-	if target and target.Parent then
-		local pos = target.Position
-		if aimPrediction then
-			local vel = target.AssemblyLinearVelocity or Vector3.zero
-			pos = pos + vel * 0.12
-		end
-		local targetCF = CFrame.new(camera.CFrame.Position, pos)
-		camera.CFrame = camera.CFrame:Lerp(targetCF, aimSmooth)
-	end
-end)
 RunService.Stepped:Connect(function()
 	if not noclipEnabled then return end
 	local char = player.Character
 	if not char then return end
-	for _, part in ipairs(char:GetDescendants()) do
+	for _, part in ipairs(char:GetChildren()) do
 		if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.2) do
+	while true do
 		if godEnabled then
 			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 			if hum then hum.MaxHealth = math.huge hum.Health = math.huge end
+			task.wait(0.2)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.05) do
+	while true do
 		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		if hum and hum.FloorMaterial ~= Enum.Material.Air then doubleJumpUsed = false end
+		task.wait(0.1)
 	end
 end)
 UserInputService.JumpRequest:Connect(function()
@@ -762,14 +835,7 @@ UserInputService.JumpRequest:Connect(function()
 	end
 end)
 local function applyFullbright()
-	savedLighting = {
-		Brightness = Lighting.Brightness,
-		ClockTime = Lighting.ClockTime,
-		FogEnd = Lighting.FogEnd,
-		Ambient = Lighting.Ambient,
-		OutdoorAmbient = Lighting.OutdoorAmbient,
-		GlobalShadows = Lighting.GlobalShadows,
-	}
+	savedLighting = { Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime, FogEnd = Lighting.FogEnd, Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient, GlobalShadows = Lighting.GlobalShadows }
 	Lighting.Brightness = 3
 	Lighting.ClockTime = 14
 	Lighting.FogEnd = 100000
@@ -787,22 +853,26 @@ player.Idled:Connect(function()
 	end
 end)
 task.spawn(function()
-	while task.wait(0.5) do
+	while true do
 		if lowGravityEnabled then workspace.Gravity = 50 else workspace.Gravity = savedGravity end
+		task.wait(0.5)
 	end
 end)
 task.spawn(function()
-	while task.wait(0.1) do
+	while true do
 		if autoSprintEnabled then
 			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 			if hum and hum.MoveDirection.Magnitude > 0.1 then hum.WalkSpeed = math.max(hum.WalkSpeed, 30) end
+			task.wait(0.1)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 local lastSafeFlingPos = nil
 local flingStrikes = 0
 task.spawn(function()
-	while task.wait(0.05) do
+	while true do
 		if antiFlingEnabled then
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -817,18 +887,19 @@ task.spawn(function()
 						pcall(function() hrp.CFrame = lastSafeFlingPos end)
 						flingStrikes = 0
 					end
-				else
-					if speed < 40 and spin < 15 then
-						lastSafeFlingPos = hrp.CFrame
-						flingStrikes = math.max(0, flingStrikes - 1)
-					end
+				elseif speed < 40 and spin < 15 then
+					lastSafeFlingPos = hrp.CFrame
+					flingStrikes = math.max(0, flingStrikes - 1)
 				end
 			end
+			task.wait(0.1)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.1) do
+	while true do
 		if antiVoidOn then
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -842,21 +913,21 @@ task.spawn(function()
 					notify("Anti-Void спас 🛡", true)
 				end
 			end
+			task.wait(0.3)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
--- "ЛИПКИЙ" KILL ALL
 task.spawn(function()
-	while task.wait(0.5) do
+	while true do
 		if killAllOn then
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hrp and hum then
 				local tool
-				for _, t in ipairs(char:GetChildren()) do
-					if t:IsA("Tool") then tool = t break end
-				end
+				for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") then tool = t break end end
 				if tool then
 					pcall(function() hum:EquipTool(tool) end)
 					for _, p in ipairs(Players:GetPlayers()) do
@@ -879,21 +950,31 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(0.5)
+		else
+			task.wait(1)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.1) do
+	while true do
 		if autoClickerEnabled then
-			pcall(function()
-				VirtualUser:CaptureController()
-				VirtualUser:ClickButton1(Vector2.new(workspace.CurrentCamera.ViewportSize.X / 2, workspace.CurrentCamera.ViewportSize.Y / 2))
-			end)
+			local cam = workspace.CurrentCamera
+			if cam then
+				local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+				pcall(function()
+					VirtualUser:CaptureController()
+					VirtualUser:ClickButton1(center)
+				end)
+			end
+			task.wait(autoClickerDelay)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.3) do
+	while true do
 		if hitboxEnabled then
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p ~= player and p.Character then
@@ -906,6 +987,9 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(0.3)
+		else
+			task.wait(1)
 		end
 	end
 end)
@@ -923,7 +1007,7 @@ local function clearHitbox()
 	end
 end
 task.spawn(function()
-	while task.wait(0.5) do
+	while true do
 		if infiniteAmmoEnabled then
 			local char = player.Character
 			if char then
@@ -932,20 +1016,21 @@ task.spawn(function()
 						for _, v in ipairs(tool:GetDescendants()) do
 							if v:IsA("IntValue") or v:IsA("NumberValue") then
 								local n = v.Name:lower()
-								if n:find("ammo") or n:find("bullet") or n:find("mag") then
-									pcall(function() v.Value = 999 end)
-								end
+								if n:find("ammo") or n:find("bullet") or n:find("mag") then pcall(function() v.Value = 999 end) end
 							end
 						end
 					end
 				end
 			end
+			task.wait(0.5)
+		else
+			task.wait(1)
 		end
 	end
 end)
 local fpsBoostedObjects = {}
 task.spawn(function()
-	while task.wait(2) do
+	while true do
 		if fpsBoostEnabled then
 			for _, obj in ipairs(workspace:GetDescendants()) do
 				if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
@@ -955,16 +1040,12 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(2)
 		else
 			for _, obj in ipairs(fpsBoostedObjects) do pcall(function() obj.Enabled = true end) end
 			fpsBoostedObjects = {}
+			task.wait(2)
 		end
-	end
-end)
-RunService.RenderStepped:Connect(function()
-	if cinematicEnabled then
-		local camera = workspace.CurrentCamera
-		camera.FieldOfView = 40
 	end
 end)
 
@@ -985,111 +1066,62 @@ makeSlider(tabMain, "Сила прыжка", 50, 500, 50, function(v)
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if hum then hum.UseJumpPower = true hum.JumpPower = v end
 end)
-makeToggle(tabMain, "🦘  Бесконечный прыжок", false, function(s)
-	infJumpEnabled = s
-	notify(s and "Inf Jump вкл" or "Inf Jump выкл", s)
-end)
-makeToggle(tabMain, "🦘  Двойной прыжок", false, function(s)
-	doubleJumpOn = s
-	doubleJumpUsed = false
-	notify(s and "Двойной вкл" or "Двойной выкл", s)
-end)
-makeToggle(tabMain, "🏃  Авто-бег", false, function(s)
-	autoSprintEnabled = s
-	notify(s and "Авто-бег вкл" or "Авто-бег выкл", s)
-end)
+makeToggle(tabMain, "🦘  Бесконечный прыжок", false, function(s) infJumpEnabled = s notify(s and "Inf Jump вкл" or "Inf Jump выкл", s) end)
+makeToggle(tabMain, "🦘  Двойной прыжок", false, function(s) doubleJumpOn = s doubleJumpUsed = false notify(s and "Двойной вкл" or "Двойной выкл", s) end)
+makeToggle(tabMain, "🏃  Авто-бег", false, function(s) autoSprintEnabled = s notify(s and "Авто-бег вкл" or "Авто-бег выкл", s) end)
 sectionLabel(tabMain, "Полёт")
-makeToggle(tabMain, "✈  Fly GUI V3", false, function(s)
-	if s then loadFlyGUI_V3() else unloadFlyGUI_V3() end
-end)
+makeToggle(tabMain, "✈  Fly GUI V3", false, function(s) if s then loadFlyGUI_V3() else unloadFlyGUI_V3() end end)
 sectionLabel(tabMain, "Бой")
-makeToggle(tabMain, "⚔  Kill All (нужно оружие)", false, function(s)
-	killAllOn = s
-	notify(s and "Kill All вкл" or "Kill All выкл", s)
-end)
+makeToggle(tabMain, "⚔  Kill All (нужно оружие)", false, function(s) killAllOn = s notify(s and "Kill All вкл" or "Kill All выкл", s) end)
 makeSlider(tabMain, "Задержка между ударами", 1, 30, 15, function(v) killDelay = v / 100 end)
 sectionLabel(tabMain, "Физика")
 makeToggle(tabMain, "🚪  Noclip", false, function(s)
 	noclipEnabled = s
 	if not s then
 		local char = player.Character
-		if char then
-			for _, part in ipairs(char:GetDescendants()) do
-				if part:IsA("BasePart") then part.CanCollide = true end
-			end
-		end
+		if char then for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end end
 	end
 	notify(s and "Noclip вкл" or "Noclip выкл", s)
 end)
 makeToggle(tabMain, "🛡  Бессмертие", false, function(s)
 	godEnabled = s
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	if hum then
-		if s then hum.MaxHealth = math.huge hum.Health = math.huge
-		else hum.MaxHealth = 100 hum.Health = 100 end
-	end
+	if hum then if s then hum.MaxHealth = math.huge hum.Health = math.huge else hum.MaxHealth = 100 hum.Health = 100 end end
 	notify(s and "God вкл" or "God выкл", s)
 end)
-makeToggle(tabMain, "🎈  Низкая гравитация", false, function(s)
-	lowGravityEnabled = s
-	if not s then workspace.Gravity = savedGravity end
-	notify(s and "Low Gravity вкл" or "Low Gravity выкл", s)
-end)
-makeToggle(tabMain, "🕐  Анти-АФК", false, function(s)
-	antiAfkEnabled = s
-	notify(s and "Anti-AFK вкл" or "Anti-AFK выкл", s)
-end)
-makeToggle(tabMain, "🛡  Анти-Флинг", false, function(s)
-	antiFlingEnabled = s
-	notify(s and "Anti-Fling вкл" or "Anti-Fling выкл", s)
-end)
-makeToggle(tabMain, "🛡  Anti-Void", false, function(s)
-	antiVoidOn = s
-	notify(s and "Anti-Void вкл" or "Anti-Void выкл", s)
-end)
+makeToggle(tabMain, "🎈  Низкая гравитация", false, function(s) lowGravityEnabled = s if not s then workspace.Gravity = savedGravity end notify(s and "Low G вкл" or "Low G выкл", s) end)
+makeToggle(tabMain, "🕐  Анти-АФК", false, function(s) antiAfkEnabled = s notify(s and "Anti-AFK вкл" or "Anti-AFK выкл", s) end)
+makeToggle(tabMain, "🛡  Анти-Флинг", false, function(s) antiFlingEnabled = s notify(s and "Anti-Fling вкл" or "Anti-Fling выкл", s) end)
+makeToggle(tabMain, "🛡  Anti-Void", false, function(s) antiVoidOn = s notify(s and "Anti-Void вкл" or "Anti-Void выкл", s) end)
 
 -- ВИЗУАЛ
 sectionLabel(tabVisual, "Подсветка")
-makeToggle(tabVisual, "👁  ESP игроков", false, function(s)
-	espEnabled = s
-	if not s then clearESP() end
-	notify(s and "ESP вкл" or "ESP выкл", s)
-end)
+makeToggle(tabVisual, "👁  ESP игроков", false, function(s) espEnabled = s if not s then clearESP() end notify(s and "ESP вкл" or "ESP выкл", s) end)
 sectionLabel(tabVisual, "Бой")
 makeToggle(tabVisual, "🎯  Автонаведение", false, function(s)
 	aimEnabled = s
-	if not s then aimCurrentTarget = nil end
-	notify(s and "Aim вкл" or "Aim выкл", s)
+	if not s then aimCurrentTarget = nil aimLockedKey = nil end
+	notify(s and "Aim вкл 🎯" or "Aim выкл", s)
 end)
 makeSlider(tabVisual, "Плавность наведения", 1, 20, 4, function(v) aimSmooth = 0.9 / v end)
 makeSlider(tabVisual, "Дистанция наведения", 50, 2000, 500, function(v) aimFOV = v end)
 makeSlider(tabVisual, "Задержка смены цели", 1, 20, 5, function(v) aimSwitchDelay = v / 10 end)
-makeToggle(tabVisual, "👁  Только видимые цели", false, function(s)
-	aimVisibleOnly = s
-	notify(s and "Видимые" or "Все цели", s)
+makeToggle(tabVisual, "👁  Только видимые цели", false, function(s) aimVisibleOnly = s notify(s and "Видимые" or "Все цели", s) end)
+makeToggle(tabVisual, "🤝  Игнорировать тиммейтов", false, function(s) aimTeamCheck = s notify(s and "Тиммейты игнор" or "Все цели", s) end)
+makeToggle(tabVisual, "🔮  Предикция движения", true, function(s) aimPrediction = s notify(s and "Предикция вкл" or "Предикция выкл", s) end)
+makeToggle(tabVisual, "🔫  TriggerBot", false, function(s) aimTriggerBot = s notify(s and "TriggerBot вкл" or "TriggerBot выкл", s) end)
+makeSlider(tabVisual, "Радиус триггера (пиксели)", 10, 100, 40, function(v) aimTriggerRadius = v end)
+makeButton(tabVisual, "🎯  Метод наведения: AUTO", function()
+	if aimMethod == "auto" then aimMethod = "camera" notify("Метод: Camera", true)
+	elseif aimMethod == "camera" then aimMethod = "humanoid" notify("Метод: Humanoid", true)
+	elseif aimMethod == "humanoid" then aimMethod = "hybrid" notify("Метод: Гибрид", true)
+	else aimMethod = "auto" notify("Метод: AUTO", true) end
 end)
-makeToggle(tabVisual, "🤝  Игнорировать тиммейтов", false, function(s)
-	aimTeamCheck = s
-	notify(s and "Тиммейты игнор" or "Все цели", s)
-end)
-makeToggle(tabVisual, "🔮  Предикция движения", true, function(s)
-	aimPrediction = s
-	notify(s and "Предикция вкл" or "Предикция выкл", s)
-end)
-makeToggle(tabVisual, "📦  Расширитель хитбокса", false, function(s)
-	hitboxEnabled = s
-	if not s then clearHitbox() end
-	notify(s and "Hitbox вкл" or "Hitbox выкл", s)
-end)
+makeToggle(tabVisual, "📦  Расширитель хитбокса", false, function(s) hitboxEnabled = s if not s then clearHitbox() end notify(s and "Hitbox вкл" or "Hitbox выкл", s) end)
 makeSlider(tabVisual, "Размер хитбокса", 2, 20, 5, function(v) hitboxSize = v end)
-makeToggle(tabVisual, "🔫  Бесконечные патроны", false, function(s)
-	infiniteAmmoEnabled = s
-	notify(s and "Inf Ammo вкл" or "Inf Ammo выкл", s)
-end)
-makeToggle(tabVisual, "🖱  Автокликер", false, function(s)
-	autoClickerEnabled = s
-	notify(s and "AutoClicker вкл" or "AutoClicker выкл", s)
-end)
+makeToggle(tabVisual, "🔫  Бесконечные патроны", false, function(s) infiniteAmmoEnabled = s notify(s and "Inf Ammo вкл" or "Inf Ammo выкл", s) end)
+makeToggle(tabVisual, "🖱  Автокликер", false, function(s) autoClickerEnabled = s notify(s and "AutoClicker вкл" or "AutoClicker выкл", s) end)
+makeSlider(tabVisual, "Скорость кликера (в сек)", 1, 50, 10, function(v) autoClickerDelay = 1 / v end)
 sectionLabel(tabVisual, "Камера и свет")
 makeSlider(tabVisual, "Обзор камеры", 40, 120, 70, function(v)
 	local camera = workspace.CurrentCamera
@@ -1097,22 +1129,15 @@ makeSlider(tabVisual, "Обзор камеры", 40, 120, 70, function(v)
 end)
 makeToggle(tabVisual, "☀  Яркое освещение", false, function(s)
 	fullbrightEnabled = s
-	if s then applyFullbright() notify("Fullbright вкл", true)
-	else removeFullbright() notify("Fullbright выкл", false) end
+	if s then applyFullbright() notify("Fullbright вкл", true) else removeFullbright() notify("Fullbright выкл", false) end
 end)
 makeToggle(tabVisual, "🎬  Кинокамера", false, function(s)
 	cinematicEnabled = s
-	if not s then
-		local camera = workspace.CurrentCamera
-		if camera then camera.FieldOfView = 70 end
-	end
+	if not s then local camera = workspace.CurrentCamera if camera then camera.FieldOfView = 70 end end
 	notify(s and "Cinematic вкл" or "Cinematic выкл", s)
 end)
 sectionLabel(tabVisual, "Производительность")
-makeToggle(tabVisual, "⚡  Ускорение ФПС", false, function(s)
-	fpsBoostEnabled = s
-	notify(s and "FPS Boost вкл" or "FPS Boost выкл", s)
-end)
+makeToggle(tabVisual, "⚡  Ускорение ФПС", false, function(s) fpsBoostEnabled = s notify(s and "FPS Boost вкл" or "FPS Boost выкл", s) end)
 sectionLabel(tabVisual, "Эффекты")
 makeToggle(tabVisual, "🔴  Красная аура", false, function(s)
 	auraEnabled = s
@@ -1172,14 +1197,8 @@ makeToggle(tabVisual, "🔴  Красная аура", false, function(s)
 				auraRotation += dt * 90
 				local diskPos = h.Position - Vector3.new(0, 2.7, 0)
 				local pulse2 = 1 + math.sin(t * 3) * 0.08
-				if auraParts[1] then
-					auraParts[1].CFrame = CFrame.new(diskPos) * CFrame.Angles(0, 0, math.rad(90))
-					auraParts[1].Size = Vector3.new(0.2, 10 * pulse2, 10 * pulse2)
-				end
-				if auraParts[2] then
-					auraParts[2].CFrame = CFrame.new(diskPos) * CFrame.Angles(0, 0, math.rad(90))
-					auraParts[2].Size = Vector3.new(0.25, 11 * pulse2, 11 * pulse2)
-				end
+				if auraParts[1] then auraParts[1].CFrame = CFrame.new(diskPos) * CFrame.Angles(0, 0, math.rad(90)) auraParts[1].Size = Vector3.new(0.2, 10 * pulse2, 10 * pulse2) end
+				if auraParts[2] then auraParts[2].CFrame = CFrame.new(diskPos) * CFrame.Angles(0, 0, math.rad(90)) auraParts[2].Size = Vector3.new(0.25, 11 * pulse2, 11 * pulse2) end
 				local dotRadius = 5.2 * pulse2
 				local count = 0
 				for i = 3, 10 do
@@ -1204,40 +1223,129 @@ makeToggle(tabVisual, "🔴  Красная аура", false, function(s)
 	end
 end)
 
--- ИГРЫ
+-- ИГРЫ: MM2
 sectionLabel(tabGames, "🔪 Murder Mystery 2")
-makeToggle(tabGames, "👁  Подсветка ролей", false, function(s)
-	_G.MM2_Roles = s
-	notify(s and "Роли видны" or "Выкл", s)
-end)
-makeToggle(tabGames, "🔔  Оповещение об убийце", false, function(s)
-	_G.MM2_Alert = s
-	notify(s and "Оповещение вкл" or "Выкл", s)
-end)
-makeToggle(tabGames, "🏆  Авто-победа", false, function(s)
-	_G.MM2_Win = s
-	notify(s and "⚠ Auto Win вкл" or "Выкл", s)
-end)
-makeToggle(tabGames, "🔫  Авто-подбор пистолета", false, function(s)
-	_G.MM2_Pickup = s
-	notify(s and "Auto Pickup вкл" or "Выкл", s)
-end)
-makeToggle(tabGames, "💰  Авто-фарм монет", false, function(s)
-	_G.MM2_Farm = s
-	notify(s and "Auto Farm вкл" or "Выкл", s)
-end)
-makeToggle(tabGames, "🎯  Авто-стрельба (шериф)", false, function(s)
-	_G.MM2_Shoot = s
-	notify(s and "Auto Shoot вкл" or "Выкл", s)
-end)
-makeToggle(tabGames, "🛡  Анти-нож", false, function(s)
-	_G.MM2_AntiKnife = s
-	notify(s and "Anti-Knife вкл" or "Выкл", s)
-end)
-sectionLabel(tabGames, "⛵ Build A Boat For Treasure")
-makeToggle(tabGames, "🏆  Auto Win (Автофарм)", false, function(s)
+makeToggle(tabGames, "👁  Подсветка ролей", false, function(s) _G.MM2_Roles = s notify(s and "Роли видны" or "Выкл", s) end)
+makeToggle(tabGames, "🔔  Оповещение об убийце", false, function(s) _G.MM2_Alert = s notify(s and "Оповещение вкл" or "Выкл", s) end)
+makeToggle(tabGames, "🏆  MM2 AUTO WIN (легит)", false, function(s)
+	mm2AutoWinOn = s
 	if s then
-		babftAutoWinEnabled = true
+		if not mm2Thread then
+			mm2Thread = task.spawn(function()
+				while mm2AutoWinOn do
+					local char = player.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					if hrp and hum and hum.Health > 0 then
+						local myRole = "innocent"
+						local bp = player:FindFirstChild("Backpack")
+						if char:FindFirstChild("Knife") or (bp and bp:FindFirstChild("Knife")) then myRole = "murderer"
+						elseif char:FindFirstChild("Gun") or char:FindFirstChild("Revolver") or (bp and (bp:FindFirstChild("Gun") or bp:FindFirstChild("Revolver"))) then myRole = "sheriff" end
+						local nearest, nd = nil, math.huge
+						for _, p in ipairs(Players:GetPlayers()) do
+							if p ~= player and p.Character then
+								local pHRP = p.Character:FindFirstChild("HumanoidRootPart")
+								local pHum = p.Character:FindFirstChildOfClass("Humanoid")
+								if pHRP and pHum and pHum.Health > 0 then
+									local pbp = p:FindFirstChild("Backpack")
+									local hasKnife = p.Character:FindFirstChild("Knife") or (pbp and pbp:FindFirstChild("Knife"))
+									if myRole == "murderer" or hasKnife then
+										local d = (pHRP.Position - hrp.Position).Magnitude
+										if d < nd then nd = d nearest = pHRP end
+									end
+								end
+							end
+						end
+						if nearest then
+							local tool
+							for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") then tool = t break end end
+							for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
+							local dist = (nearest.Position - hrp.Position).Magnitude
+							if dist > mm2KillDist then
+								local dir = (nearest.Position - hrp.Position).Unit
+								local step = math.min(mm2FlySpeed * 0.05, dist)
+								hrp.CFrame = hrp.CFrame + dir * step
+								hrp.CFrame = CFrame.new(hrp.Position, nearest.Position)
+							else
+								hrp.CFrame = CFrame.new(hrp.Position, nearest.Position)
+								if tool then pcall(function() tool:Activate() end) end
+							end
+						else
+							for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end
+						end
+					end
+					task.wait(0.05)
+				end
+				mm2Thread = nil
+			end)
+		end
+		notify("MM2 Auto Win вкл 🏆", true)
+	else
+		if mm2Thread then pcall(function() task.cancel(mm2Thread) end) mm2Thread = nil end
+		local char = player.Character
+		if char then for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
+		notify("MM2 Auto Win выкл", false)
+	end
+end)
+makeSlider(tabGames, "Скорость MM2 полёта", 10, 100, 35, function(v) mm2FlySpeed = v end)
+makeSlider(tabGames, "Дистанция атаки MM2", 2, 15, 4, function(v) mm2KillDist = v end)
+makeToggle(tabGames, "🔫  Авто-подбор (легит)", false, function(s)
+	mm2AutoPickupOn = s
+	if s then
+		if not mm2PickupThread then
+			mm2PickupThread = task.spawn(function()
+				while mm2AutoPickupOn do
+					local char = player.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					if hrp and hum and hum.Health > 0 then
+						local nearest, nd = nil, math.huge
+						for _, obj in ipairs(workspace:GetChildren()) do
+							if obj:IsA("Tool") and (obj.Name == "Gun" or obj.Name == "Revolver") then
+								local handle = obj:FindFirstChild("Handle")
+								if handle then
+									local d = (handle.Position - hrp.Position).Magnitude
+									if d < nd then nd = d nearest = handle end
+								end
+							end
+						end
+						if nearest then
+							for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
+							local dist = (nearest.Position - hrp.Position).Magnitude
+							if dist > mm2PickupDist then
+								local dir = (nearest.Position - hrp.Position).Unit
+								local step = math.min(mm2PickupSpeed * 0.05, dist)
+								hrp.CFrame = hrp.CFrame + dir * step
+							else
+								hrp.CFrame = CFrame.new(nearest.Position + Vector3.new(0, 2, 0))
+								pcall(function() firetouchinterest(hrp, nearest, 0) task.wait(0.05) firetouchinterest(hrp, nearest, 1) end)
+								task.wait(0.3)
+							end
+						end
+					end
+					task.wait(0.05)
+				end
+				mm2PickupThread = nil
+			end)
+		end
+		notify("Auto Pickup вкл 🔫", true)
+	else
+		if mm2PickupThread then pcall(function() task.cancel(mm2PickupThread) end) mm2PickupThread = nil end
+		local char = player.Character
+		if char then for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
+		notify("Auto Pickup выкл", false)
+	end
+end)
+makeSlider(tabGames, "Скорость подбора", 10, 100, 35, function(v) mm2PickupSpeed = v end)
+makeSlider(tabGames, "Дистанция подбора", 1, 10, 3, function(v) mm2PickupDist = v end)
+makeToggle(tabGames, "🎯  Авто-стрельба (шериф)", false, function(s) _G.MM2_Shoot = s notify(s and "Auto Shoot вкл" or "Выкл", s) end)
+makeToggle(tabGames, "🛡  Анти-нож", false, function(s) _G.MM2_AntiKnife = s notify(s and "Anti-Knife вкл" or "Выкл", s) end)
+
+-- ИГРЫ: BABFT
+sectionLabel(tabGames, "⛵ Build A Boat For Treasure")
+makeToggle(tabGames, "🏆  Auto Win (норм)", false, function(s)
+	babftAutoWinEnabled = s
+	if s then
 		if not babftAutoWinThread then
 			babftAutoWinThread = task.spawn(function()
 				while babftAutoWinEnabled do
@@ -1245,42 +1353,59 @@ makeToggle(tabGames, "🏆  Auto Win (Автофарм)", false, function(s)
 					local hrp = char and char:FindFirstChild("HumanoidRootPart")
 					local hum = char and char:FindFirstChildOfClass("Humanoid")
 					if hrp and hum and hum.Health > 0 then
-						local treasureChest = workspace:FindFirstChild("Treasure") or workspace:FindFirstChild("Chest")
-						if not treasureChest then
-							for _, obj in ipairs(workspace:GetDescendants()) do
-								if obj:IsA("Model") and (obj.Name:lower():find("treasure") or obj.Name:lower():find("chest")) then
-									treasureChest = obj
-									break
-								end
-							end
+						local chest
+						for _, obj in ipairs(workspace:GetDescendants()) do
+							local n = obj.Name:lower()
+							if n:find("treasure") or n:find("chest") or n:find("reward") or n:find("prize") or n:find("goal") or n:find("finish") then chest = obj break end
 						end
-						if treasureChest then
-							local chestPart = treasureChest:FindFirstChildWhichIsA("BasePart") or treasureChest.PrimaryPart
-							if chestPart then
-								hrp.CFrame = CFrame.new(chestPart.Position + Vector3.new(0, 5, 0))
-								task.wait(0.2)
-								pcall(function()
-									firetouchinterest(hrp, chestPart, 0)
-									task.wait(0.1)
-									firetouchinterest(hrp, chestPart, 1)
-								end)
+						local chestPart = chest and (chest:IsA("BasePart") and chest or chest:FindFirstChildWhichIsA("BasePart") or chest.PrimaryPart)
+						if chestPart then
+							local oldMax = hum.MaxHealth
+							hum.MaxHealth = math.huge
+							hum.Health = math.huge
+							for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
+							local startPos = hrp.Position
+							for i = 1, 30 do
+								if not babftAutoWinEnabled then break end
+								local alpha = i / 30
+								hrp.CFrame = CFrame.new(startPos:Lerp(chestPart.Position, alpha))
+								task.wait(0.02)
 							end
+							hrp.CFrame = CFrame.new(chestPart.Position + Vector3.new(0, 2, 0))
+							hrp.AssemblyLinearVelocity = Vector3.zero
+							task.delay(2, function()
+								if hum and hum.Parent then hum.MaxHealth = oldMax if hum.Health > oldMax then hum.Health = oldMax end end
+								if char and char.Parent then for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then p.CanCollide = true end end end
+							end)
+							task.wait(0.5)
+							for i = 1, 10 do
+								if not babftAutoWinEnabled then break end
+								pcall(function() firetouchinterest(hrp, chestPart, 0) task.wait(0.05) firetouchinterest(hrp, chestPart, 1) end)
+								task.wait(0.1)
+							end
+							task.wait(babftChestWaitTime)
+						else
+							task.wait(0.5)
 						end
 					end
-					task.wait(0.5)
+					task.wait(0.3)
 				end
+				babftAutoWinThread = nil
 			end)
 		end
 		notify("BABFT Auto Win вкл 🏆", true)
 	else
-		babftAutoWinEnabled = false
-		if babftAutoWinThread then
-			pcall(function() task.cancel(babftAutoWinThread) end)
-			babftAutoWinThread = nil
-		end
+		if babftAutoWinThread then pcall(function() task.cancel(babftAutoWinThread) end) babftAutoWinThread = nil end
+		local char = player.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum then hum.MaxHealth = 100 if hum.Health > 100 then hum.Health = 100 end end
+		if char then for _, p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
 		notify("BABFT Auto Win выкл", false)
 	end
 end)
+makeSlider(tabGames, "Время сбора награды (сек)", 1, 10, 3, function(v) babftChestWaitTime = v end)
+
+-- ИГРЫ: Rivals
 sectionLabel(tabGames, "🏆 Rivals — Auto Win")
 local autoWinEnabled = false
 local autoWinRange = 500
@@ -1313,10 +1438,7 @@ local function getRivalsEnemy()
 			local ray = workspace:Raycast(myHRP.Position, head.Position - myHRP.Position, params)
 			local visible = (ray == nil) or ray.Instance:IsDescendantOf(p.Character)
 			if not visible then continue end
-			if dist < bestScore then
-				bestScore = dist
-				best = { char = p.Character, head = head, hrp = hrp }
-			end
+			if dist < bestScore then bestScore = dist best = { char = p.Character, head = head, hrp = hrp } end
 		end
 	end
 	return best
@@ -1325,10 +1447,7 @@ local function tryFire()
 	local char = player.Character
 	if not char then return end
 	for _, t in ipairs(char:GetChildren()) do
-		if t:IsA("Tool") then
-			pcall(function() t:Activate() end)
-			return
-		end
+		if t:IsA("Tool") then pcall(function() t:Activate() end) return end
 	end
 end
 RunService.RenderStepped:Connect(function()
@@ -1339,20 +1458,12 @@ RunService.RenderStepped:Connect(function()
 	local target = autoWinTarget
 	if target then
 		local stillAlive = target.char and target.char.Parent and target.char:FindFirstChildOfClass("Humanoid") and target.char:FindFirstChildOfClass("Humanoid").Health > 0
-		if not stillAlive then
-			autoWinTarget = nil
-			target = nil
-		end
+		if not stillAlive then autoWinTarget = nil target = nil end
 	end
-	if not target then
-		target = getRivalsEnemy()
-		autoWinTarget = target
-	end
+	if not target then target = getRivalsEnemy() autoWinTarget = target end
 	if target and target.head and target.head.Parent then
 		local aimPos = target.head.Position
-		if autoWinHeadshotBias < 1 then
-			aimPos = aimPos:Lerp(target.hrp.Position, 1 - autoWinHeadshotBias)
-		end
+		if autoWinHeadshotBias < 1 then aimPos = aimPos:Lerp(target.hrp.Position, 1 - autoWinHeadshotBias) end
 		local vel = target.hrp.AssemblyLinearVelocity or Vector3.zero
 		local dist = (aimPos - camera.CFrame.Position).Magnitude
 		local predictTime = math.min(dist / 500, 0.12)
@@ -1362,48 +1473,23 @@ RunService.RenderStepped:Connect(function()
 		local sp, onScreen = camera:WorldToViewportPoint(aimPos)
 		local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 		local aimDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-		if onScreen and aimDist < 60 and tick() - autoWinLastFire > autoWinFireRate then
-			tryFire()
-			autoWinLastFire = tick()
-		end
+		if onScreen and aimDist < 60 and tick() - autoWinLastFire > autoWinFireRate then tryFire() autoWinLastFire = tick() end
 	end
 end)
-makeToggle(tabGames, "🏆  AUTO WIN", false, function(s)
-	autoWinEnabled = s
-	if not s then autoWinTarget = nil end
-	notify(s and "AUTO WIN вкл 🏆" or "AUTO WIN выкл", s)
-end)
+makeToggle(tabGames, "🏆  AUTO WIN", false, function(s) autoWinEnabled = s if not s then autoWinTarget = nil end notify(s and "AUTO WIN вкл 🏆" or "AUTO WIN выкл", s) end)
 makeSlider(tabGames, "Дистанция захвата", 50, 1500, 500, function(v) autoWinRange = v end)
 makeSlider(tabGames, "Скорость стрельбы", 1, 20, 10, function(v) autoWinFireRate = v / 100 end)
 makeSlider(tabGames, "Хедшот-биас (%)", 0, 100, 85, function(v) autoWinHeadshotBias = v / 100 end)
 
 -- ФАН
 sectionLabel(tabFun, "Шутки")
-makeToggle(tabFun, "🍆  Визуальный PP", false, function(s)
-	_G.MakaziPP = s
-	notify(s and "PP вкл 😂" or "PP выкл", s)
-end)
+makeToggle(tabFun, "🍆  Визуальный PP", false, function(s) _G.MakaziPP = s notify(s and "PP вкл 😂" or "PP выкл", s) end)
 makeSlider(tabFun, "Размер PP", 1, 5, 2, function(v) _G.MakaziPPSize = v end)
-makeToggle(tabFun, "🪵  Tung Tung Sahur", false, function(s)
-	_G.MakaziSahur = s
-	notify(s and "Sahur 🪵" or "Sahur ушёл", s)
-end)
-makeToggle(tabFun, "👻  Невидимость", false, function(s)
-	_G.MakaziInvis = s
-	notify(s and "Invis вкл" or "Invis выкл", s)
-end)
-makeToggle(tabFun, "🌈  Радуга", false, function(s)
-	_G.MakaziRainbow = s
-	notify(s and "Rainbow вкл" or "Rainbow выкл", s)
-end)
-makeToggle(tabFun, "🐰  Bunny Hop", false, function(s)
-	_G.MakaziBunny = s
-	notify(s and "Bunny вкл" or "Bunny выкл", s)
-end)
-makeToggle(tabFun, "🔥  Огненный след", false, function(s)
-	_G.MakaziFire = s
-	notify(s and "Fire вкл" or "Fire выкл", s)
-end)
+makeToggle(tabFun, "🪵  Tung Tung Sahur", false, function(s) _G.MakaziSahur = s notify(s and "Sahur 🪵" or "Sahur ушёл", s) end)
+makeToggle(tabFun, "👻  Невидимость", false, function(s) _G.MakaziInvis = s notify(s and "Invis вкл" or "Invis выкл", s) end)
+makeToggle(tabFun, "🌈  Радуга", false, function(s) _G.MakaziRainbow = s notify(s and "Rainbow вкл" or "Rainbow выкл", s) end)
+makeToggle(tabFun, "🐰  Bunny Hop", false, function(s) _G.MakaziBunny = s notify(s and "Bunny вкл" or "Bunny выкл", s) end)
+makeToggle(tabFun, "🔥  Огненный след", false, function(s) _G.MakaziFire = s notify(s and "Fire вкл" or "Fire выкл", s) end)
 sectionLabel(tabFun, "Вращение")
 makeToggle(tabFun, "🌀  Спин (камера на месте)", false, function(s)
 	if s then
@@ -1432,10 +1518,7 @@ makeToggle(tabFun, "🌀  Спин (камера на месте)", false, funct
 		notify("Спин выкл", false)
 	end
 end)
-makeSlider(tabFun, "Скорость спина (°/сек)", 180, 2160, 720, function(v)
-	spinSpeed = v
-	if spinAV then spinAV.AngularVelocity = Vector3.new(0, math.rad(v), 0) end
-end)
+makeSlider(tabFun, "Скорость спина (°/сек)", 180, 2160, 720, function(v) spinSpeed = v if spinAV then spinAV.AngularVelocity = Vector3.new(0, math.rad(v), 0) end end)
 sectionLabel(tabFun, "Флинг")
 local function flingPlayer(target)
 	if not target or target == player then return false end
@@ -1454,17 +1537,11 @@ local function flingPlayer(target)
 	weld.Parent = myHRP
 	task.wait(0.03)
 	local dir = Vector3.new((math.random() - 0.5) * 2, 1, (math.random() - 0.5) * 2).Unit
-	pcall(function()
-		myHRP.AssemblyLinearVelocity = dir * flingPower * 10
-		myHRP.AssemblyAngularVelocity = Vector3.new(9e9, 9e9, 9e9)
-	end)
+	pcall(function() myHRP.AssemblyLinearVelocity = dir * flingPower * 10 myHRP.AssemblyAngularVelocity = Vector3.new(9e9, 9e9, 9e9) end)
 	task.wait(0.08)
 	pcall(function() weld:Destroy() end)
 	task.wait(0.02)
-	pcall(function()
-		myHRP.CFrame = savedCF
-		myHRP.AssemblyLinearVelocity = savedVel
-	end)
+	pcall(function() myHRP.CFrame = savedCF myHRP.AssemblyLinearVelocity = savedVel end)
 	return true
 end
 local function getNearestPlayer(range)
@@ -1489,27 +1566,18 @@ makeButton(tabFun, "💥  FLING ALL", function()
 		for _, p in ipairs(Players:GetPlayers()) do
 			if p ~= player and p.Character then
 				local hum = p.Character:FindFirstChildOfClass("Humanoid")
-				if hum and hum.Health > 0 then
-					if flingPlayer(p) then count = count + 1 end
-					task.wait(0.12)
-				end
+				if hum and hum.Health > 0 then if flingPlayer(p) then count = count + 1 end task.wait(0.12) end
 			end
 		end
 		notify("Откинул: " .. count, count > 0)
 	end)
 end)
-makeButton(tabFun, "🎯  FLING ближайшего", function()
-	local t = getNearestPlayer(flingRange)
-	if t then task.spawn(function() flingPlayer(t) end) end
-end)
-makeToggle(tabFun, "🤝  FLING при касании", false, function(s)
-	flingOnTouchOn = s
-	notify(s and "Touch Fling вкл" or "Touch Fling выкл", s)
-end)
+makeButton(tabFun, "🎯  FLING ближайшего", function() local t = getNearestPlayer(flingRange) if t then task.spawn(function() flingPlayer(t) end) end end)
+makeToggle(tabFun, "🤝  FLING при касании", false, function(s) flingOnTouchOn = s notify(s and "Touch Fling вкл" or "Touch Fling выкл", s) end)
 makeSlider(tabFun, "Дистанция флинга", 5, 40, 12, function(v) flingRange = v end)
 makeSlider(tabFun, "Сила флинга", 100, 2000, 500, function(v) flingPower = v end)
 task.spawn(function()
-	while task.wait(0.2) do
+	while true do
 		if flingOnTouchOn then
 			local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 			if myHRP then
@@ -1524,51 +1592,27 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(0.4)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 
 -- ПРОЧЕЕ
 sectionLabel(tabMisc, "Настройки")
-makeToggle(tabMisc, "🔊  Звуки меню", true, function(s)
-	soundEnabled = s
-	notify(s and "Звуки вкл" or "Звуки выкл", s)
-end)
+makeToggle(tabMisc, "🔊  Звуки меню", true, function(s) soundEnabled = s notify(s and "Звуки вкл" or "Звуки выкл", s) end)
 sectionLabel(tabMisc, "Быстрые действия")
-makeButton(tabMisc, "🔄  Возродиться", function()
-	local c = player.Character
-	if c then c:BreakJoints() end
-end)
-makeButton(tabMisc, "⬆  Телепорт вверх", function()
-	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if hrp then hrp.CFrame += Vector3.new(0, 50, 0) end
-end)
-makeButton(tabMisc, "🔁  Rejoin", function()
-	notify("Перезаход...", true)
-	task.wait(0.5)
-	pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-end)
+makeButton(tabMisc, "🔄  Возродиться", function() local c = player.Character if c then c:BreakJoints() end end)
+makeButton(tabMisc, "⬆  Телепорт вверх", function() local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart") if hrp then hrp.CFrame += Vector3.new(0, 50, 0) end end)
+makeButton(tabMisc, "🔁  Rejoin", function() notify("Перезаход...", true) task.wait(0.5) pcall(function() TeleportService:Teleport(game.PlaceId, player) end) end)
 makeButton(tabMisc, "❌  Выключить всё", function()
-	if spinEnabled then
-		spinEnabled = false
-		if spinAV then spinAV:Destroy() spinAV = nil end
-		local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-		if h and spinSavedAutoRotate ~= nil then h.AutoRotate = spinSavedAutoRotate end
-	end
-	if auraEnabled then
-		auraEnabled = false
-		if auraConn then auraConn:Disconnect() auraConn = nil end
-		for _, p in ipairs(auraParts) do pcall(function() p:Destroy() end) end
-		auraParts = {}
-	end
+	if spinEnabled then spinEnabled = false if spinAV then spinAV:Destroy() spinAV = nil end local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid") if h and spinSavedAutoRotate ~= nil then h.AutoRotate = spinSavedAutoRotate end end
+	if auraEnabled then auraEnabled = false if auraConn then auraConn:Disconnect() auraConn = nil end for _, p in ipairs(auraParts) do pcall(function() p:Destroy() end) end auraParts = {} end
 	if flyGuiLoaded then unloadFlyGUI_V3() end
-	if babftAutoWinEnabled then
-		babftAutoWinEnabled = false
-		if babftAutoWinThread then
-			pcall(function() task.cancel(babftAutoWinThread) end)
-			babftAutoWinThread = nil
-		end
-	end
+	if mm2AutoWinOn then mm2AutoWinOn = false if mm2Thread then pcall(function() task.cancel(mm2Thread) end) mm2Thread = nil end end
+	if mm2AutoPickupOn then mm2AutoPickupOn = false if mm2PickupThread then pcall(function() task.cancel(mm2PickupThread) end) mm2PickupThread = nil end end
+	if babftAutoWinEnabled then babftAutoWinEnabled = false if babftAutoWinThread then pcall(function() task.cancel(babftAutoWinThread) end) babftAutoWinThread = nil end end
 	espEnabled = false clearESP()
 	aimEnabled = false aimCurrentTarget = nil
 	noclipEnabled = false
@@ -1590,27 +1634,11 @@ makeButton(tabMisc, "❌  Выключить всё", function()
 	cinematicEnabled = false
 	flingOnTouchOn = false
 	autoWinEnabled = false autoWinTarget = nil
-	_G.MM2_Roles = false
-	_G.MM2_Alert = false
-	_G.MM2_Win = false
-	_G.MM2_Pickup = false
-	_G.MM2_Farm = false
-	_G.MM2_Shoot = false
-	_G.MM2_AntiKnife = false
-	_G.MakaziPP = false
-	_G.MakaziSahur = false
-	_G.MakaziInvis = false
-	_G.MakaziRainbow = false
-	_G.MakaziBunny = false
-	_G.MakaziFire = false
+	_G.MM2_Roles = false _G.MM2_Alert = false _G.MM2_Win = false _G.MM2_Pickup = false _G.MM2_Farm = false _G.MM2_Shoot = false _G.MM2_AntiKnife = false
+	_G.MakaziPP = false _G.MakaziSahur = false _G.MakaziInvis = false _G.MakaziRainbow = false _G.MakaziBunny = false _G.MakaziFire = false
 	local char = player.Character
 	if char then
-		for _, part in ipairs(char:GetDescendants()) do
-			if part:IsA("BasePart") then
-				part.CanCollide = true
-				part.LocalTransparencyModifier = 0
-			end
-		end
+		for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true part.LocalTransparencyModifier = 0 end end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then hum.MaxHealth = 100 hum.Health = 100 hum.WalkSpeed = 16 end
 	end
@@ -1622,41 +1650,27 @@ end)
 -- MM2 ЛОГИКА
 local function getToolFrom(container, names)
 	if not container then return nil end
-	for _, n in ipairs(names) do
-		local t = container:FindFirstChild(n)
-		if t then return t end
-	end
+	for _, n in ipairs(names) do local t = container:FindFirstChild(n) if t then return t end end
 end
 local function getMyTool(names)
 	local c = player.Character
 	local bp = player:FindFirstChild("Backpack")
 	return getToolFrom(c, names) or getToolFrom(bp, names)
 end
-local function hasTool(p, names)
-	return (getToolFrom(p.Character, names) or getToolFrom(p:FindFirstChild("Backpack"), names)) ~= nil
-end
+local function hasTool(p, names) return (getToolFrom(p.Character, names) or getToolFrom(p:FindFirstChild("Backpack"), names)) ~= nil end
 local function isMurderer(p) return p ~= player and hasTool(p, { "Knife" }) end
 local function isSheriff(p) return p ~= player and hasTool(p, { "Gun", "Revolver" }) end
 task.spawn(function()
-	while task.wait(0.3) do
+	while true do
 		if _G.MM2_Roles then
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p ~= player and p.Character then
 					local char = p.Character
 					local tag, color
-					if isMurderer(p) then
-						tag, color = "MM2_M", Color3.fromRGB(255, 0, 0)
-					elseif isSheriff(p) then
-						tag, color = "MM2_S", Color3.fromRGB(0, 120, 255)
-					else
-						tag, color = "MM2_I", Color3.fromRGB(240, 240, 240)
-					end
-					for _, other in ipairs({ "MM2_M", "MM2_S", "MM2_I" }) do
-						if other ~= tag then
-							local h = char:FindFirstChild(other)
-							if h then h:Destroy() end
-						end
-					end
+					if isMurderer(p) then tag, color = "MM2_M", Color3.fromRGB(255, 0, 0)
+					elseif isSheriff(p) then tag, color = "MM2_S", Color3.fromRGB(0, 120, 255)
+					else tag, color = "MM2_I", Color3.fromRGB(240, 240, 240) end
+					for _, other in ipairs({ "MM2_M", "MM2_S", "MM2_I" }) do if other ~= tag then local h = char:FindFirstChild(other) if h then h:Destroy() end end end
 					local hl = char:FindFirstChild(tag)
 					if not hl then
 						hl = Instance.new("Highlight")
@@ -1670,89 +1684,14 @@ task.spawn(function()
 					hl.OutlineColor = color
 				end
 			end
+			task.wait(0.3)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.3) do
-		if _G.MM2_Win then
-			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			local hum = char and char:FindFirstChildOfClass("Humanoid")
-			if hrp and hum and hum.Health > 0 then
-				local knife = getMyTool({ "Knife" })
-				local gun = getMyTool({ "Gun", "Revolver" })
-				if knife then
-					pcall(function() hum:EquipTool(knife) end)
-					for _, p in ipairs(Players:GetPlayers()) do
-						if p ~= player and p.Character then
-							local thum = p.Character:FindFirstChildOfClass("Humanoid")
-							local thrp = p.Character:FindFirstChild("HumanoidRootPart")
-							if thum and thrp and thum.Health > 0 then
-								hrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 2)
-								task.wait(0.05)
-								pcall(function() knife:Activate() end)
-								task.wait(0.05)
-							end
-						end
-					end
-				elseif gun then
-					pcall(function() hum:EquipTool(gun) end)
-					for _, p in ipairs(Players:GetPlayers()) do
-						if isMurderer(p) and p.Character then
-							local thum = p.Character:FindFirstChildOfClass("Humanoid")
-							local thrp = p.Character:FindFirstChild("HumanoidRootPart")
-							if thum and thrp and thum.Health > 0 then
-								hrp.CFrame = thrp.CFrame + Vector3.new(0, 0, 3)
-								task.wait(0.1)
-								pcall(function() gun:Activate() end)
-								task.wait(0.15)
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-end)
-task.spawn(function()
-	while task.wait(0.4) do
-		if _G.MM2_Pickup then
-			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-			if hrp then
-				for _, obj in ipairs(workspace:GetChildren()) do
-					if obj:IsA("Tool") and (obj.Name == "Gun" or obj.Name == "Revolver") then
-						local handle = obj:FindFirstChild("Handle")
-						if handle then
-							hrp.CFrame = CFrame.new(handle.Position + Vector3.new(0, 2, 0))
-							task.wait(0.15)
-						end
-					end
-				end
-			end
-		end
-	end
-end)
-task.spawn(function()
-	while task.wait(0.4) do
-		if _G.MM2_Farm then
-			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-			if hrp then
-				for _, obj in ipairs(workspace:GetDescendants()) do
-					if obj:IsA("BasePart") then
-						local n = obj.Name:lower()
-						if (n:find("coin") or n:find("money")) and obj.CanCollide then
-							hrp.CFrame = CFrame.new(obj.Position + Vector3.new(0, 2, 0))
-							task.wait(0.06)
-						end
-					end
-				end
-			end
-		end
-	end
-end)
-task.spawn(function()
-	while task.wait(0.1) do
+	while true do
 		if _G.MM2_Shoot then
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -1771,16 +1710,16 @@ task.spawn(function()
 						end
 					end
 				end
-				if nearestKiller then
-					hrp.CFrame = CFrame.new(hrp.Position, nearestKiller.Position)
-					pcall(function() gun:Activate() end)
-				end
+				if nearestKiller then hrp.CFrame = CFrame.new(hrp.Position, nearestKiller.Position) pcall(function() gun:Activate() end) end
 			end
+			task.wait(0.1)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.1) do
+	while true do
 		if _G.MM2_AntiKnife then
 			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 			if hrp then
@@ -1794,12 +1733,15 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(0.1)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 local mm2LastNotify = 0
 task.spawn(function()
-	while task.wait(0.5) do
+	while true do
 		if _G.MM2_Alert then
 			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 			if hrp then
@@ -1819,50 +1761,56 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(0.5)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 
 -- ФАН-ЛОГИКА
 task.spawn(function()
-	while task.wait(0.3) do
+	while true do
 		if _G.MakaziInvis then
 			local char = player.Character
 			if char then
-				for _, part in ipairs(char:GetDescendants()) do
-					if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-						part.LocalTransparencyModifier = 1
-					end
+				for _, part in ipairs(char:GetChildren()) do
+					if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then part.LocalTransparencyModifier = 1 end
 				end
 			end
+			task.wait(0.3)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.08) do
+	while true do
 		if _G.MakaziRainbow then
 			local char = player.Character
 			if char then
 				local c = Color3.fromHSV(tick() % 1, 1, 1)
-				for _, p in ipairs(char:GetDescendants()) do
-					if p:IsA("BasePart") then pcall(function() p.Color = c end) end
-				end
+				for _, p in ipairs(char:GetChildren()) do if p:IsA("BasePart") then pcall(function() p.Color = c end) end end
 			end
+			task.wait(0.08)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.05) do
+	while true do
 		if _G.MakaziBunny then
 			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-			if hum and hum.MoveDirection.Magnitude > 0.1 and hum.FloorMaterial ~= Enum.Material.Air then
-				hum:ChangeState(Enum.HumanoidStateType.Jumping)
-			end
+			if hum and hum.MoveDirection.Magnitude > 0.1 and hum.FloorMaterial ~= Enum.Material.Air then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+			task.wait(0.05)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 task.spawn(function()
-	while task.wait(0.15) do
+	while true do
 		if _G.MakaziFire then
 			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 			if hrp then
@@ -1871,13 +1819,16 @@ task.spawn(function()
 				fire.Parent = hrp
 				task.delay(1.5, function() if fire then fire:Destroy() end end)
 			end
+			task.wait(0.15)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 local ppParts = {}
 local ppConn = nil
 task.spawn(function()
-	while task.wait(0.3) do
+	while true do
 		if _G.MakaziPP and #ppParts == 0 then
 			local char = player.Character
 			local torso = char and (char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso"))
@@ -1912,25 +1863,27 @@ task.spawn(function()
 				wTip.C0 = CFrame.new(-(0.7 * size), 0, 0)
 				wTip.Parent = tip
 			end
+			task.wait(0.3)
 		elseif not _G.MakaziPP and #ppParts > 0 then
 			if ppConn then ppConn:Disconnect() ppConn = nil end
 			for _, p in ipairs(ppParts) do pcall(function() p:Destroy() end) end
 			ppParts = {}
+			task.wait(0.3)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
 local sahurModel
 local SAHUR_ID = 83138270236341
 task.spawn(function()
-	while task.wait(0.4) do
+	while true do
 		if _G.MakaziSahur and not sahurModel then
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
-				for _, part in ipairs(char:GetDescendants()) do
-					if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-						pcall(function() part.LocalTransparencyModifier = 1 end)
-					end
+				for _, part in ipairs(char:GetChildren()) do
+					if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then pcall(function() part.LocalTransparencyModifier = 1 end) end
 					if part:IsA("Decal") then pcall(function() part.Transparency = 1 end) end
 				end
 				local ok, model = pcall(function() return InsertService:LoadAsset(SAHUR_ID) end)
@@ -1964,9 +1917,7 @@ task.spawn(function()
 					end
 					if primary then
 						local s = 8 / primary.Size.Y
-						for _, d in ipairs(model:GetDescendants()) do
-							if d:IsA("BasePart") then d.Size = d.Size * s end
-						end
+						for _, d in ipairs(model:GetDescendants()) do if d:IsA("BasePart") then d.Size = d.Size * s end end
 						local weld = Instance.new("WeldConstraint")
 						weld.Part0 = hrp
 						weld.Part1 = primary
@@ -1979,18 +1930,20 @@ task.spawn(function()
 					end
 				end
 			end
+			task.wait(0.4)
 		elseif not _G.MakaziSahur and sahurModel then
 			pcall(function() sahurModel:Destroy() end)
 			sahurModel = nil
 			local char = player.Character
 			if char then
-				for _, part in ipairs(char:GetDescendants()) do
-					if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-						pcall(function() part.LocalTransparencyModifier = 0 end)
-					end
+				for _, part in ipairs(char:GetChildren()) do
+					if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then pcall(function() part.LocalTransparencyModifier = 0 end) end
 					if part:IsA("Decal") then pcall(function() part.Transparency = 0 end) end
 				end
 			end
+			task.wait(0.4)
+		else
+			task.wait(0.5)
 		end
 	end
 end)
@@ -2067,21 +2020,17 @@ closeBtn.MouseButton1Click:Connect(closeMenu)
 searchInput:GetPropertyChangedSignal("Text"):Connect(function()
 	local query = searchInput.Text:lower()
 	if query == "" then
-		for _, item in ipairs(allItems) do
-			if item.obj and item.obj.Parent then item.obj.Visible = true end
-		end
+		for _, item in ipairs(allItems) do if item.obj and item.obj.Parent then item.obj.Visible = true end end
 		selectTab("Главное")
 	else
 		for _, c in pairs(pages) do c.Visible = true end
 		for _, item in ipairs(allItems) do
-			if item.obj and item.obj.Parent then
-				item.obj.Visible = item.text:lower():find(query) ~= nil
-			end
+			if item.obj and item.obj.Parent then item.obj.Visible = item.text:lower():find(query) ~= nil end
 		end
 	end
 end)
 selectTab("Главное")
 task.delay(1, function()
-	notify("Makazi Mod v10.2 загружен ✅", true)
-	print("[MAKAZI] Всё готово! v10.2 FULL")
+	notify("Makazi Mod v10.3 загружен ✅", true)
+	print("[MAKAZI] Всё готово! v10.3 FULL")
 end)
