@@ -1,7 +1,7 @@
 --==========================================================
---   MAKAZI MOD  •  v10.5  •  FULL MOBILE EDITION
+--   MAKAZI MOD  •  v10.6  •  FULL MOBILE EDITION
 --==========================================================
-print("=== MAKAZI MOD v10.5 START ===")
+print("=== MAKAZI MOD v10.6 START ===")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -202,7 +202,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -140, 1, 0)
 title.Position = UDim2.new(0, 12, 0, -2)
 title.BackgroundTransparency = 1
-title.Text = "MAKAZI MOD v10.5"
+title.Text = "MAKAZI MOD v10.6"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 15
 title.Font = FONT_BOLD
@@ -588,12 +588,18 @@ local babftChestWaitTime = 3
 local babftExternalLoaded = false
 local mm2Kento = { AutoFarm=false, Noclip=false, TPWalk=false, InfJump=false, ESP=false, AimBot=false, KillAura=false, TPWalkSpeed=0.4 }
 local mm2Coins = {}
--- НОВЫЕ ПЕРЕМЕННЫЕ v10.5
 local clickTPEnabled = false
 local espNamesEnabled = false
 local antiStunEnabled = false
 local autoRespawnEnabled = false
 local currentFpsCap = 60
+-- Sheriff Auto-Shoot
+local mm2SheriffAuto = false
+local mm2SheriffRange = 300
+local mm2SheriffDelay = 0.5
+local mm2SheriffLastShot = 0
+local mm2SheriffPredict = true
+local mm2SheriffWallCheck = true
 
 -- ФУНКЦИИ
 local function loadFlyGUI_V3()
@@ -805,7 +811,6 @@ local function clearESP()
 	for _, ln in pairs(espLines) do pcall(function() ln:Remove() end) end
 	espLines = {}
 end
--- NAMETAGS
 RunService.RenderStepped:Connect(function()
 	if not espNamesEnabled then return end
 	for _, p in ipairs(Players:GetPlayers()) do
@@ -937,7 +942,6 @@ task.spawn(function()
 		end
 	end
 end)
--- ANTI-FLING
 local lastSafeFlingPos = nil
 local flingStrikes = 0
 task.spawn(function()
@@ -967,7 +971,6 @@ task.spawn(function()
 		end
 	end
 end)
--- ANTI-VOID
 task.spawn(function()
 	while true do
 		if antiVoidOn then
@@ -989,7 +992,6 @@ task.spawn(function()
 		end
 	end
 end)
--- ANTI-STUN
 RunService.Heartbeat:Connect(function()
 	if not antiStunEnabled then return end
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
@@ -1003,7 +1005,6 @@ RunService.Heartbeat:Connect(function()
 		pcall(function() hum.PlatformStand = false end)
 	end
 end)
--- AUTO RESPAWN
 task.spawn(function()
 	while true do
 		if autoRespawnEnabled then
@@ -1016,7 +1017,6 @@ task.spawn(function()
 		task.wait(0.5)
 	end
 end)
--- CLICK TP
 UserInputService.InputBegan:Connect(function(input, gp)
 	if gp or not clickTPEnabled then return end
 	if input.UserInputType ~= Enum.UserInputType.Touch
@@ -1036,7 +1036,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
 		end
 	end
 end)
--- KILL ALL
 task.spawn(function()
 	while true do
 		if killAllOn then
@@ -1074,7 +1073,6 @@ task.spawn(function()
 		end
 	end
 end)
--- AUTO CLICKER
 task.spawn(function()
 	while true do
 		if autoClickerEnabled then
@@ -1092,7 +1090,6 @@ task.spawn(function()
 		end
 	end
 end)
--- HITBOX
 task.spawn(function()
 	while true do
 		if hitboxEnabled then
@@ -1130,7 +1127,6 @@ local function clearHitbox()
 	end
 	hitboxOriginalSizes = {}
 end
--- INF AMMO
 task.spawn(function()
 	while true do
 		if infiniteAmmoEnabled then
@@ -1153,7 +1149,6 @@ task.spawn(function()
 		end
 	end
 end)
--- FPS BOOST
 local fpsBoostedObjects = {}
 task.spawn(function()
 	while true do
@@ -1175,7 +1170,7 @@ task.spawn(function()
 	end
 end)
 
--- MM2 KENTO (интегрирован Gjfssbn23)
+-- MM2 KENTO
 local function mm2GetRole(pl)
 	if not pl then return "I" end
 	local c = pl.Character
@@ -1315,6 +1310,114 @@ local function mm2ClearESP()
 		end
 	end
 end
+
+-- ============================================================
+-- Sheriff Auto-Shoot (сам наводится и стреляет в убийцу)
+-- ============================================================
+local function mm2IsSheriff()
+	local char = player.Character
+	if not char then return false end
+	local c = char:FindFirstChild("Gun") or char:FindFirstChild("GunVisuals")
+	if c then return true end
+	local lh = char:FindFirstChild("LeftHand")
+	if lh and lh:FindFirstChild("GunVisuals") then return true end
+	local bp = player:FindFirstChild("Backpack")
+	if bp and (bp:FindFirstChild("Gun") or bp:FindFirstChild("GunVisuals")) then return true end
+	if player:FindFirstChild("Status") and player.Status:FindFirstChild("Role") then
+		local r = player.Status.Role.Value
+		if r == "Sheriff" or r == "Hero" then return true end
+	end
+	return false
+end
+local function mm2GetMurderer()
+	local myChar = player.Character
+	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHRP then return nil end
+	local best, bestDist = nil, mm2SheriffRange
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player and p.Character then
+			local r = mm2GetRole(p)
+			if r == "M" then
+				local hum = p.Character:FindFirstChildOfClass("Humanoid")
+				if hum and hum.Health > 0 then
+					local tHRP = p.Character:FindFirstChild("HumanoidRootPart")
+					local tHead = p.Character:FindFirstChild("Head")
+					if tHRP and tHead then
+						local d = (tHRP.Position - myHRP.Position).Magnitude
+						if d < bestDist then
+							if mm2SheriffWallCheck then
+								local params = RaycastParams.new()
+								params.FilterType = Enum.RaycastFilterType.Exclude
+								params.FilterDescendantsInstances = { myChar }
+								params.IgnoreWater = true
+								local ray = workspace:Raycast(myHRP.Position, tHead.Position - myHRP.Position, params)
+								local visible = (ray == nil) or ray.Instance:IsDescendantOf(p.Character)
+								if visible then
+									bestDist = d
+									best = { hrp = tHRP, head = tHead, char = p.Character }
+								end
+							else
+								bestDist = d
+								best = { hrp = tHRP, head = tHead, char = p.Character }
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+local function mm2EnsureGunEquipped()
+	local char = player.Character
+	if not char then return nil end
+	local gun = char:FindFirstChild("Gun")
+	if gun then return gun end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local bp = player:FindFirstChild("Backpack")
+	if hum and bp then
+		local g = bp:FindFirstChild("Gun")
+		if g then
+			pcall(function() hum:EquipTool(g) end)
+			task.wait(0.1)
+			return char:FindFirstChild("Gun")
+		end
+	end
+	return nil
+end
+task.spawn(function()
+	while true do
+		if mm2SheriffAuto then
+			if mm2IsSheriff() then
+				local gun = mm2EnsureGunEquipped()
+				if gun then
+					local target = mm2GetMurderer()
+					if target then
+						local camera = workspace.CurrentCamera
+						local myChar = player.Character
+						local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+						if camera and myHRP then
+							local aimPos = target.head.Position
+							if mm2SheriffPredict then
+								local vel = target.hrp.AssemblyLinearVelocity or Vector3.zero
+								local dist = (aimPos - camera.CFrame.Position).Magnitude
+								aimPos = aimPos + vel * math.min(dist / 500, 0.15)
+							end
+							camera.CFrame = CFrame.new(camera.CFrame.Position, aimPos)
+							if tick() - mm2SheriffLastShot > mm2SheriffDelay then
+								pcall(function() gun:Activate() end)
+								mm2SheriffLastShot = tick()
+							end
+						end
+					end
+				end
+			end
+			task.wait(0.03)
+		else
+			task.wait(0.3)
+		end
+	end
+end)
 
 -- RIVALS
 local autoWinEnabled = false
@@ -1651,6 +1754,21 @@ makeButton(tabGames, "🔱  Подобрать пистолет (TP)", function(
 			notify("Пистолет подобран 🔱", true)
 		end
 	end
+end)
+sectionLabel(tabGames, "🔫 Sheriff Auto-Shoot")
+makeToggle(tabGames, "🔫  Sheriff Auto-Shoot (сам наводится и стреляет)", false, function(s)
+	mm2SheriffAuto = s
+	notify(s and "Sheriff Auto-Shoot вкл 🔫" or "Sheriff Auto-Shoot выкл", s)
+end)
+makeSlider(tabGames, "Дистанция авто-стрельбы", 50, 500, 300, function(v) mm2SheriffRange = v end)
+makeSlider(tabGames, "Задержка выстрела (мс)", 100, 2000, 500, function(v) mm2SheriffDelay = v / 1000 end)
+makeToggle(tabGames, "🔮  Предикция (стрельба на опережение)", true, function(s)
+	mm2SheriffPredict = s
+	notify(s and "Предикция вкл" or "Предикция выкл", s)
+end)
+makeToggle(tabGames, "👁  Проверка стен", true, function(s)
+	mm2SheriffWallCheck = s
+	notify(s and "Wall-check вкл" or "Wall-check выкл", s)
 end)
 
 -- ИГРЫ: BABFT
@@ -2039,6 +2157,7 @@ makeButton(tabMisc, "❌  Выключить всё", function()
 	flingOnTouchOn = false
 	autoWinEnabled = false autoWinTarget = nil
 	mm2Kento.AutoFarm = false mm2Kento.Noclip = false mm2Kento.TPWalk = false mm2Kento.InfJump = false mm2Kento.ESP = false mm2Kento.AimBot = false mm2Kento.KillAura = false
+	mm2SheriffAuto = false
 	mm2ClearESP()
 	_G.MakaziPP = false _G.MakaziSahur = false _G.MakaziInvis = false _G.MakaziRainbow = false _G.MakaziBunny = false _G.MakaziFire = false
 	local char = player.Character
@@ -2262,6 +2381,6 @@ searchInput:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 selectTab("Главное")
 task.delay(1, function()
-	notify("Makazi Mod v10.5 загружен ✅", true)
-	print("[MAKAZI] Всё готово! v10.5 FULL")
+	notify("Makazi Mod v10.6 загружен ✅", true)
+	print("[MAKAZI] Всё готово! v10.6 FULL")
 end)
