@@ -1,7 +1,7 @@
 --==========================================================
---   MAKAZI MOD  •  v10.6  •  FULL MOBILE EDITION
+--   MAKAZI MOD  •  v10.7  •  FULL MOBILE EDITION
 --==========================================================
-print("=== MAKAZI MOD v10.6 START ===")
+print("=== MAKAZI MOD v10.7 START ===")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -88,6 +88,15 @@ notifLayout.SortOrder = Enum.SortOrder.LayoutOrder
 notifLayout.Parent = notifHolder
 local function notify(text, ok)
 	playSound(SOUND_IDS.click, 0.3, ok and 1.2 or 0.9)
+	local count = 0
+	for _, c in ipairs(notifHolder:GetChildren()) do
+		if c:IsA("Frame") then count = count + 1 end
+	end
+	if count >= 5 then
+		for _, c in ipairs(notifHolder:GetChildren()) do
+			if c:IsA("Frame") then c:Destroy() break end
+		end
+	end
 	local card = Instance.new("Frame")
 	card.Size = UDim2.new(1, 0, 0, 40)
 	card.BackgroundColor3 = COLORS.card
@@ -202,7 +211,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -140, 1, 0)
 title.Position = UDim2.new(0, 12, 0, -2)
 title.BackgroundTransparency = 1
-title.Text = "MAKAZI MOD v10.6"
+title.Text = "MAKAZI MOD v10.7"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 15
 title.Font = FONT_BOLD
@@ -600,6 +609,26 @@ local mm2SheriffDelay = 0.5
 local mm2SheriffLastShot = 0
 local mm2SheriffPredict = true
 local mm2SheriffWallCheck = true
+-- 99 Nights in the Forest
+local n99_AutoFarm = false
+local n99_AutoChop = false
+local n99_AutoEat = false
+local n99_AutoCampfire = false
+local n99_GodMode = false
+local n99_FreezeEnemies = false
+local n99_KillAura = false
+local n99_KillAuraRange = 22
+local n99_TreeAura = false
+local n99_TreeAuraRange = 25
+local n99_InfiniteJump = false
+local n99_Noclip = false
+local n99_ESP_Chests = false
+local n99_ESP_Enemies = false
+local n99_ESP_Children = false
+local n99_ESP_Players = false
+local n99_BringItems = false
+local n99_AutoWin = false
+local n99_LastCampfireCheck = 0
 
 -- ФУНКЦИИ
 local function loadFlyGUI_V3()
@@ -887,7 +916,7 @@ UserInputService.JumpRequest:Connect(function()
 	if not char then return end
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if not hum then return end
-	if infJumpEnabled or mm2Kento.InfJump then
+	if infJumpEnabled or mm2Kento.InfJump or n99_InfiniteJump then
 		hum:ChangeState(Enum.HumanoidStateType.Jumping)
 	elseif doubleJumpOn then
 		local inAir = hum.FloorMaterial == Enum.Material.Air
@@ -1311,9 +1340,7 @@ local function mm2ClearESP()
 	end
 end
 
--- ============================================================
--- Sheriff Auto-Shoot (сам наводится и стреляет в убийцу)
--- ============================================================
+-- Sheriff Auto-Shoot
 local function mm2IsSheriff()
 	local char = player.Character
 	if not char then return false end
@@ -1336,8 +1363,7 @@ local function mm2GetMurderer()
 	local best, bestDist = nil, mm2SheriffRange
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= player and p.Character then
-			local r = mm2GetRole(p)
-			if r == "M" then
+			if mm2GetRole(p) == "M" then
 				local hum = p.Character:FindFirstChildOfClass("Humanoid")
 				if hum and hum.Health > 0 then
 					local tHRP = p.Character:FindFirstChild("HumanoidRootPart")
@@ -1351,8 +1377,7 @@ local function mm2GetMurderer()
 								params.FilterDescendantsInstances = { myChar }
 								params.IgnoreWater = true
 								local ray = workspace:Raycast(myHRP.Position, tHead.Position - myHRP.Position, params)
-								local visible = (ray == nil) or ray.Instance:IsDescendantOf(p.Character)
-								if visible then
+								if (ray == nil) or ray.Instance:IsDescendantOf(p.Character) then
 									bestDist = d
 									best = { hrp = tHRP, head = tHead, char = p.Character }
 								end
@@ -1390,12 +1415,11 @@ task.spawn(function()
 		if mm2SheriffAuto then
 			if mm2IsSheriff() then
 				local gun = mm2EnsureGunEquipped()
-				if gun then
+				if gun and gun.Parent == player.Character then
 					local target = mm2GetMurderer()
 					if target then
 						local camera = workspace.CurrentCamera
-						local myChar = player.Character
-						local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+						local myHRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 						if camera and myHRP then
 							local aimPos = target.head.Position
 							if mm2SheriffPredict then
@@ -1416,6 +1440,287 @@ task.spawn(function()
 		else
 			task.wait(0.3)
 		end
+	end
+end)
+
+-- ============================================================
+-- 99 NIGHTS IN THE FOREST
+-- ============================================================
+local function n99_Char()
+	local c = player.Character
+	return c, c and c:FindFirstChild("HumanoidRootPart"), c and c:FindFirstChildOfClass("Humanoid")
+end
+local function n99_GetTool(namePart)
+	local char, _, hum = n99_Char()
+	if not char or not hum then return nil end
+	for _, t in ipairs(char:GetChildren()) do
+		if t:IsA("Tool") and t.Name:lower():find(namePart) then return t end
+	end
+	local bp = player:FindFirstChild("Backpack")
+	if bp then
+		for _, t in ipairs(bp:GetChildren()) do
+			if t:IsA("Tool") and t.Name:lower():find(namePart) then
+				pcall(function() hum:EquipTool(t) end)
+				task.wait(0.1)
+				return char:FindFirstChild(t.Name)
+			end
+		end
+	end
+	return nil
+end
+-- Auto Campfire
+task.spawn(function()
+	while true do
+		if n99_AutoCampfire and tick() - n99_LastCampfireCheck > 2 then
+			n99_LastCampfireCheck = tick()
+			local _, hrp, hum = n99_Char()
+			if hrp and hum and hum.Health > 0 then
+				local fuelTool = n99_GetTool("fuel") or n99_GetTool("wood") or n99_GetTool("log") or n99_GetTool("coal")
+				if fuelTool then
+					local campfire = workspace:FindFirstChild("Campfire", true)
+					if campfire and campfire:IsA("BasePart") then
+						local old = hrp.CFrame
+						hrp.CFrame = campfire.CFrame * CFrame.new(0, 2, 0)
+						task.wait(0.2)
+						pcall(function() fuelTool:Activate() end)
+						task.wait(0.1)
+						hrp.CFrame = old
+					end
+				end
+			end
+		end
+		task.wait(1)
+	end
+end)
+-- Auto Farm
+task.spawn(function()
+	while true do
+		if n99_AutoFarm then
+			local _, hrp, hum = n99_Char()
+			if hrp and hum and hum.Health > 0 then
+				local best, dist = nil, 120
+				for _, obj in ipairs(workspace:GetDescendants()) do
+					if obj:IsA("BasePart") and obj.Parent then
+						local n = obj.Name:lower()
+						if n:find("diamond") or n:find("flower") or n:find("berry") or n:find("sapling") or n:find("gold") then
+							local d = (obj.Position - hrp.Position).Magnitude
+							if d < dist then dist = d best = obj end
+						end
+					end
+				end
+				if best then
+					hrp.CFrame = best.CFrame * CFrame.new(0, 2, 0)
+					task.wait(0.25)
+				end
+			end
+			task.wait(0.15)
+		else task.wait(0.5) end
+	end
+end)
+-- Auto Chop
+task.spawn(function()
+	while true do
+		if n99_AutoChop then
+			local _, hrp, hum = n99_Char()
+			if hrp and hum then
+				local tool = n99_GetTool("axe") or n99_GetTool("pickaxe")
+				if tool then
+					local best, dist = nil, 35
+					for _, obj in ipairs(workspace:GetDescendants()) do
+						if obj:IsA("BasePart") and obj.Name:lower():find("tree") then
+							local d = (obj.Position - hrp.Position).Magnitude
+							if d < dist then dist = d best = obj end
+						end
+					end
+					if best then
+						hrp.CFrame = best.CFrame * CFrame.new(0, 0, 3)
+						pcall(function() tool:Activate() end)
+					end
+				end
+			end
+			task.wait(0.35)
+		else task.wait(0.5) end
+	end
+end)
+-- Tree Aura
+task.spawn(function()
+	while true do
+		if n99_TreeAura then
+			local _, hrp, hum = n99_Char()
+			if hrp and hum then
+				local tool = n99_GetTool("axe")
+				if tool then
+					for _, obj in ipairs(workspace:GetDescendants()) do
+						if obj:IsA("BasePart") and obj.Name:lower():find("tree") then
+							if (obj.Position - hrp.Position).Magnitude <= n99_TreeAuraRange then
+								pcall(function() tool:Activate() end)
+							end
+						end
+					end
+				end
+			end
+			task.wait(0.15)
+		else task.wait(0.5) end
+	end
+end)
+-- Auto Eat
+task.spawn(function()
+	while true do
+		if n99_AutoEat then
+			local char, _, hum = n99_Char()
+			if char and hum and hum.Health > 0 then
+				local hunger = char:FindFirstChild("Hunger") or char:FindFirstChild("Food")
+				if hunger and hunger:IsA("NumberValue") and hunger.Value < 50 then
+					local food = n99_GetTool("food") or n99_GetTool("berry") or n99_GetTool("meat") or n99_GetTool("apple") or n99_GetTool("carrot")
+					if food then
+						pcall(function() food:Activate() end)
+					end
+				end
+			end
+			task.wait(1.5)
+		else task.wait(2) end
+	end
+end)
+-- Kill Aura
+task.spawn(function()
+	while true do
+		if n99_KillAura then
+			local char, hrp, hum = n99_Char()
+			if hrp and hum then
+				local tool
+				for _, t in ipairs(char:GetChildren()) do
+					if t:IsA("Tool") then tool = t break end
+				end
+				if tool then
+					for _, p in ipairs(Players:GetPlayers()) do
+						if p ~= player and p.Character then
+							local tHRP = p.Character:FindFirstChild("HumanoidRootPart")
+							local tHum = p.Character:FindFirstChildOfClass("Humanoid")
+							if tHRP and tHum and tHum.Health > 0 and (tHRP.Position - hrp.Position).Magnitude <= n99_KillAuraRange then
+								pcall(function() tool:Activate() end)
+							end
+						end
+					end
+					for _, obj in ipairs(workspace:GetDescendants()) do
+						if obj:IsA("Humanoid") and obj.Parent ~= char and obj.Health > 0 then
+							local model = obj.Parent
+							local tHRP = model and (model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso"))
+							if tHRP and (tHRP.Position - hrp.Position).Magnitude <= n99_KillAuraRange then
+								pcall(function() tool:Activate() end)
+							end
+						end
+					end
+				end
+			end
+			task.wait(0.15)
+		else task.wait(0.5) end
+	end
+end)
+-- God Mode + Freeze Enemies
+RunService.Heartbeat:Connect(function()
+	if n99_GodMode then
+		local _, _, hum = n99_Char()
+		if hum then hum.MaxHealth = math.huge hum.Health = math.huge end
+	end
+	if n99_FreezeEnemies then
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("Humanoid") and obj.Parent ~= player.Character and obj.Health > 0 then
+				local model = obj.Parent
+				local hrp = model and model:FindFirstChild("HumanoidRootPart")
+				if hrp and hrp:IsA("BasePart") then hrp.Anchored = true end
+			end
+		end
+	end
+end)
+-- Noclip (99)
+RunService.Stepped:Connect(function()
+	if not n99_Noclip then return end
+	local char = player.Character
+	if char then
+		for _, p in ipairs(char:GetChildren()) do
+			if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+		end
+	end
+end)
+-- ESP
+local function n99_AddESP(obj, color, nameTag)
+	if not obj or obj:FindFirstChild("N99_ESP") then return end
+	local hl = Instance.new("Highlight")
+	hl.Name = "N99_ESP"
+	hl.FillTransparency = 0.55
+	hl.OutlineColor = color
+	hl.Parent = obj
+	if nameTag then
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "N99_Tag"
+		bb.Size = UDim2.new(0, 120, 0, 18)
+		bb.StudsOffsetWorldSpace = Vector3.new(0, 2, 0)
+		bb.AlwaysOnTop = true
+		bb.Parent = obj
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, 0, 1, 0)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = nameTag
+		lbl.TextColor3 = color
+		lbl.TextStrokeTransparency = 0
+		lbl.TextSize = 12
+		lbl.Font = Enum.Font.GothamBold
+		lbl.Parent = bb
+	end
+end
+RunService.RenderStepped:Connect(function()
+	if not (n99_ESP_Chests or n99_ESP_Enemies or n99_ESP_Children or n99_ESP_Players) then return end
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		local n = obj.Name:lower()
+		if n99_ESP_Chests and obj:IsA("BasePart") and n:find("chest") then
+			n99_AddESP(obj, Color3.fromRGB(255, 215, 0), "СУНДУК")
+		end
+		if n99_ESP_Enemies and obj:IsA("Model") and (n:find("wolf") or n:find("bear") or n:find("cultist") or n:find("enemy")) then
+			local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+			if hrp then n99_AddESP(hrp, Color3.fromRGB(255, 50, 50), "ВРАГ") end
+		end
+		if n99_ESP_Children and obj:IsA("Model") and (n:find("child") or n:find("kid") or n:find("lost")) then
+			local hrp = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso")
+			if hrp then n99_AddESP(hrp, Color3.fromRGB(50, 255, 255), "РЕБЁНОК") end
+		end
+		if n99_ESP_Players and obj:IsA("Model") and Players:GetPlayerFromCharacter(obj) and obj ~= player.Character then
+			local hrp = obj:FindFirstChild("HumanoidRootPart")
+			if hrp then n99_AddESP(hrp, COLORS.accent, "ИГРОК") end
+		end
+	end
+end)
+-- Bring Items
+task.spawn(function()
+	while true do
+		if n99_BringItems then
+			local _, hrp, _ = n99_Char()
+			if hrp then
+				for _, obj in ipairs(workspace:GetDescendants()) do
+					if obj:IsA("BasePart") and obj.Parent then
+						local n = obj.Name:lower()
+						if n:find("diamond") or n:find("gold") or n:find("coin") or n:find("chest") then
+							if (obj.Position - hrp.Position).Magnitude < 150 then
+								pcall(function() obj.CFrame = hrp.CFrame * CFrame.new(0, 2, 0) end)
+							end
+						end
+					end
+				end
+			end
+			task.wait(0.5)
+		else task.wait(1) end
+	end
+end)
+-- Auto Win (Skip Day)
+task.spawn(function()
+	while true do
+		if n99_AutoWin then
+			local _, hrp, hum = n99_Char()
+			if hrp and hum and hum.Health > 0 then
+				local skip = workspace:FindFirstChild("SkipDay", true) or workspace:FindFirstChild("NextDay", true)
+				if skip and skip:IsA("BasePart") then hrp.CFrame = skip.CFrame end
+			end
+			task.wait(2)
+		else task.wait(3) end
 	end
 end)
 
@@ -1488,9 +1793,7 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
--- ============================================================
 -- ТАБЫ
--- ============================================================
 local tabMain = makeTab("Главное", "🏠")
 local tabVisual = makeTab("Визуал", "👁")
 local tabPlayers = makeTab("Игроки", "👥")
@@ -1755,20 +2058,47 @@ makeButton(tabGames, "🔱  Подобрать пистолет (TP)", function(
 		end
 	end
 end)
-sectionLabel(tabGames, "🔫 Sheriff Auto-Shoot")
-makeToggle(tabGames, "🔫  Sheriff Auto-Shoot (сам наводится и стреляет)", false, function(s)
+sectionLabel(tabGames, "🔫 Sheriff Auto-Shoot (Шериф)")
+makeToggle(tabGames, "🔫  Авто-стрельба за шерифа", false, function(s)
 	mm2SheriffAuto = s
-	notify(s and "Sheriff Auto-Shoot вкл 🔫" or "Sheriff Auto-Shoot выкл", s)
+	notify(s and "Sheriff Auto вкл 🔫" or "Sheriff Auto выкл", s)
 end)
 makeSlider(tabGames, "Дистанция авто-стрельбы", 50, 500, 300, function(v) mm2SheriffRange = v end)
 makeSlider(tabGames, "Задержка выстрела (мс)", 100, 2000, 500, function(v) mm2SheriffDelay = v / 1000 end)
-makeToggle(tabGames, "🔮  Предикция (стрельба на опережение)", true, function(s)
+makeToggle(tabGames, "🔮  Предикция (опережение)", true, function(s)
 	mm2SheriffPredict = s
 	notify(s and "Предикция вкл" or "Предикция выкл", s)
 end)
 makeToggle(tabGames, "👁  Проверка стен", true, function(s)
 	mm2SheriffWallCheck = s
 	notify(s and "Wall-check вкл" or "Wall-check выкл", s)
+end)
+
+-- ИГРЫ: 99 Nights
+sectionLabel(tabGames, "🌲 99 Nights in the Forest")
+makeToggle(tabGames, "💰  Автофарм (ресурсы/алмазы)", false, function(s) n99_AutoFarm = s notify(s and "Автофарм вкл" or "Автофарм выкл", s) end)
+makeToggle(tabGames, "🪓  Авто-рубка деревьев", false, function(s) n99_AutoChop = s notify(s and "Авто-рубка вкл" or "Авто-рубка выкл", s) end)
+makeToggle(tabGames, "🌳  Лесорубка (всё в радиусе)", false, function(s) n99_TreeAura = s notify(s and "Лесорубка вкл" or "Лесорубка выкл", s) end)
+makeSlider(tabGames, "Радиус лесорубки", 10, 50, 25, function(v) n99_TreeAuraRange = v end)
+makeToggle(tabGames, "🍖  Авто-еда (голод)", false, function(s) n99_AutoEat = s notify(s and "Авто-еда вкл" or "Авто-еда выкл", s) end)
+makeToggle(tabGames, "🔥  Авто-костёр (топливо)", false, function(s) n99_AutoCampfire = s notify(s and "Авто-костёр вкл" or "Авто-костёр выкл", s) end)
+makeToggle(tabGames, "🛡  Бессмертие", false, function(s) n99_GodMode = s notify(s and "Бог вкл" or "Бог выкл", s) end)
+makeToggle(tabGames, "❄  Заморозка врагов", false, function(s) n99_FreezeEnemies = s notify(s and "Заморозка вкл" or "Заморозка выкл", s) end)
+makeToggle(tabGames, "⚔  Аура убийства (враги+игроки)", false, function(s) n99_KillAura = s notify(s and "Аура убийства вкл" or "Аура убийства выкл", s) end)
+makeSlider(tabGames, "Радиус ауры убийства", 5, 50, 22, function(v) n99_KillAuraRange = v end)
+makeToggle(tabGames, "🦘  Бесконечный прыжок", false, function(s) n99_InfiniteJump = s notify(s and "Inf Jump вкл" or "Inf Jump выкл", s) end)
+makeToggle(tabGames, "🚪  Noclip", false, function(s) n99_Noclip = s notify(s and "Noclip вкл" or "Noclip выкл", s) end)
+makeToggle(tabGames, "👁  ESP сундуков", false, function(s) n99_ESP_Chests = s notify(s and "Сундуки вкл" or "Сундуки выкл", s) end)
+makeToggle(tabGames, "🐺  ESP врагов", false, function(s) n99_ESP_Enemies = s notify(s and "Враги вкл" or "Враги выкл", s) end)
+makeToggle(tabGames, "🧒  ESP детей", false, function(s) n99_ESP_Children = s notify(s and "Дети вкл" or "Дети выкл", s) end)
+makeToggle(tabGames, "👥  ESP игроков", false, function(s) n99_ESP_Players = s notify(s and "Игроки вкл" or "Игроки выкл", s) end)
+makeToggle(tabGames, "📦  Притянуть предметы", false, function(s) n99_BringItems = s notify(s and "Притяжение вкл" or "Притяжение выкл", s) end)
+makeToggle(tabGames, "🏆  Авто-победа (пропуск дня)", false, function(s) n99_AutoWin = s notify(s and "Авто-победа вкл" or "Авто-победа выкл", s) end)
+makeButton(tabGames, "📦  Ringta Hub (внешний)", function()
+	notify("Загрузка Ringta Hub...", true)
+	pcall(function()
+		loadstring(game:HttpGet("https://raw.githubusercontent.com/wehibuyfgyuwe/99nights.github.io/refs/heads/main/ringta.lua"))()
+	end)
 end)
 
 -- ИГРЫ: BABFT
@@ -1854,7 +2184,6 @@ makeSlider(tabGames, "Хедшот-биас (%)", 0, 100, 85, function(v) autoWi
 
 -- ФАН
 sectionLabel(tabFun, "Шутки")
-
 _G.MakaziPP_Length = _G.MakaziPP_Length or 2
 _G.MakaziPP_Thick = _G.MakaziPP_Thick or 2
 _G.MakaziPP_TipSize = _G.MakaziPP_TipSize or 2
@@ -1998,7 +2327,6 @@ makeButton(tabFun, "🎨  Цвет PP", function()
 	notify("Цвет: " .. colors[nextIdx], true)
 	if _G.MakaziPP then destroyPP() task.wait(0.1) createPP() end
 end)
-
 makeToggle(tabFun, "🪵  Tung Tung Sahur", false, function(s) _G.MakaziSahur = s notify(s and "Sahur 🪵" or "Sahur ушёл", s) end)
 makeToggle(tabFun, "👻  Невидимость", false, function(s) _G.MakaziInvis = s notify(s and "Invis вкл" or "Invis выкл", s) end)
 makeToggle(tabFun, "🌈  Радуга", false, function(s) _G.MakaziRainbow = s notify(s and "Rainbow вкл" or "Rainbow выкл", s) end)
@@ -2074,7 +2402,7 @@ local function getNearestPlayer(range)
 	end
 	return nearest
 end
-makeButton(tabFun, "💥  FLING ALL", function()
+makeButton(tabFun, "💥  Флинг всех", function()
 	task.spawn(function()
 		local count = 0
 		for _, p in ipairs(Players:GetPlayers()) do
@@ -2086,8 +2414,8 @@ makeButton(tabFun, "💥  FLING ALL", function()
 		notify("Откинул: " .. count, count > 0)
 	end)
 end)
-makeButton(tabFun, "🎯  FLING ближайшего", function() local t = getNearestPlayer(flingRange) if t then task.spawn(function() flingPlayer(t) end) end end)
-makeToggle(tabFun, "🤝  FLING при касании", false, function(s) flingOnTouchOn = s notify(s and "Touch Fling вкл" or "Touch Fling выкл", s) end)
+makeButton(tabFun, "🎯  Флинг ближайшего", function() local t = getNearestPlayer(flingRange) if t then task.spawn(function() flingPlayer(t) end) end end)
+makeToggle(tabFun, "🤝  Флинг при касании", false, function(s) flingOnTouchOn = s notify(s and "Touch Fling вкл" or "Touch Fling выкл", s) end)
 makeSlider(tabFun, "Дистанция флинга", 5, 40, 12, function(v) flingRange = v end)
 makeSlider(tabFun, "Сила флинга", 100, 2000, 500, function(v) flingPower = v end)
 task.spawn(function()
@@ -2159,6 +2487,10 @@ makeButton(tabMisc, "❌  Выключить всё", function()
 	mm2Kento.AutoFarm = false mm2Kento.Noclip = false mm2Kento.TPWalk = false mm2Kento.InfJump = false mm2Kento.ESP = false mm2Kento.AimBot = false mm2Kento.KillAura = false
 	mm2SheriffAuto = false
 	mm2ClearESP()
+	n99_AutoFarm = false n99_AutoChop = false n99_AutoEat = false n99_AutoCampfire = false
+	n99_GodMode = false n99_FreezeEnemies = false n99_KillAura = false n99_TreeAura = false
+	n99_InfiniteJump = false n99_Noclip = false n99_ESP_Chests = false n99_ESP_Enemies = false
+	n99_ESP_Children = false n99_ESP_Players = false n99_BringItems = false n99_AutoWin = false
 	_G.MakaziPP = false _G.MakaziSahur = false _G.MakaziInvis = false _G.MakaziRainbow = false _G.MakaziBunny = false _G.MakaziFire = false
 	local char = player.Character
 	if char then
@@ -2182,9 +2514,7 @@ task.spawn(function()
 				end
 			end
 			task.wait(0.3)
-		else
-			task.wait(0.5)
-		end
+		else task.wait(0.5) end
 	end
 end)
 task.spawn(function()
@@ -2196,9 +2526,7 @@ task.spawn(function()
 				for _, p in ipairs(char:GetChildren()) do if p:IsA("BasePart") then pcall(function() p.Color = c end) end end
 			end
 			task.wait(0.08)
-		else
-			task.wait(0.5)
-		end
+		else task.wait(0.5) end
 	end
 end)
 task.spawn(function()
@@ -2207,9 +2535,7 @@ task.spawn(function()
 			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 			if hum and hum.MoveDirection.Magnitude > 0.1 and hum.FloorMaterial ~= Enum.Material.Air then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
 			task.wait(0.05)
-		else
-			task.wait(0.5)
-		end
+		else task.wait(0.5) end
 	end
 end)
 task.spawn(function()
@@ -2223,9 +2549,7 @@ task.spawn(function()
 				task.delay(1.5, function() if fire then fire:Destroy() end end)
 			end
 			task.wait(0.15)
-		else
-			task.wait(0.5)
-		end
+		else task.wait(0.5) end
 	end
 end)
 local sahurModel
@@ -2294,9 +2618,7 @@ task.spawn(function()
 				end
 			end
 			task.wait(0.4)
-		else
-			task.wait(0.5)
-		end
+		else task.wait(0.5) end
 	end
 end)
 
@@ -2381,6 +2703,6 @@ searchInput:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 selectTab("Главное")
 task.delay(1, function()
-	notify("Makazi Mod v10.6 загружен ✅", true)
-	print("[MAKAZI] Всё готово! v10.6 FULL")
+	notify("Makazi Mod v10.7 загружен ✅", true)
+	print("[MAKAZI] Всё готово! v10.7 FULL")
 end)
